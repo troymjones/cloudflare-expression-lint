@@ -77,6 +77,7 @@ export const FIELDS: FieldDef[] = [
   { name: 'http.request.timestamp.msec', type: 'Integer' },
 
   // ── HTTP Request JWT Fields ──────────────────────────────────────────
+  { name: 'http.request.jwt.claims', type: 'Map' },
   { name: 'http.request.jwt.claims.aud', type: 'Array' },
   { name: 'http.request.jwt.claims.aud.names', type: 'Array' },
   { name: 'http.request.jwt.claims.aud.values', type: 'Array' },
@@ -105,26 +106,31 @@ export const FIELDS: FieldDef[] = [
 
   // ── HTTP Response Fields (response phases only) ──────────────────────
   { name: 'http.response.code', type: 'Integer', phases: [
+    'http_ratelimit',
     'http_response_headers_transform', 'http_custom_errors',
     'http_response_compression', 'http_response_firewall_managed',
     'http_log_custom_fields',
   ]},
   { name: 'http.response.content_type.media_type', type: 'String', phases: [
+    'http_ratelimit',
     'http_response_headers_transform', 'http_custom_errors',
     'http_response_compression', 'http_response_firewall_managed',
     'http_log_custom_fields',
   ]},
   { name: 'http.response.headers', type: 'Map', phases: [
+    'http_ratelimit',
     'http_response_headers_transform', 'http_custom_errors',
     'http_response_compression', 'http_response_firewall_managed',
     'http_log_custom_fields',
   ]},
   { name: 'http.response.headers.names', type: 'Array', phases: [
+    'http_ratelimit',
     'http_response_headers_transform', 'http_custom_errors',
     'http_response_compression', 'http_response_firewall_managed',
     'http_log_custom_fields',
   ]},
   { name: 'http.response.headers.values', type: 'Array', phases: [
+    'http_ratelimit',
     'http_response_headers_transform', 'http_custom_errors',
     'http_response_compression', 'http_response_firewall_managed',
     'http_log_custom_fields',
