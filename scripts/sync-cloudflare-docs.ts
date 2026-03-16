@@ -1,19 +1,18 @@
 #!/usr/bin/env npx tsx
 
 /**
- * Sync Cloudflare fields from the official cloudflare-docs repo.
+ * Sync Cloudflare fields and functions from the official cloudflare-docs repo.
  *
- * Fetches the canonical fields YAML from:
- *   github.com/cloudflare/cloudflare-docs/src/content/fields/index.yaml
+ * Sources:
+ *   Fields:    github.com/cloudflare/cloudflare-docs/src/content/fields/index.yaml
+ *   Functions: github.com/cloudflare/cloudflare-docs/src/content/docs/ruleset-engine/rules-language/functions.mdx
  *
- * Compares against our local schema and reports:
- *   - New fields not in our registry
- *   - Fields removed from Cloudflare docs
- *   - Type changes
+ * All changes are applied to the local schema files. The GitHub Actions
+ * workflow runs this with --apply and opens a PR for review.
  *
  * Usage:
  *   npx tsx scripts/sync-cloudflare-docs.ts           # Dry run (report only)
- *   npx tsx scripts/sync-cloudflare-docs.ts --apply    # Apply changes to fields.ts
+ *   npx tsx scripts/sync-cloudflare-docs.ts --apply    # Apply all changes
  */
 
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -24,14 +23,15 @@ import { parse as parseYaml } from 'yaml';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIELDS_TS_PATH = resolve(__dirname, '../src/schemas/fields.ts');
 
-const FIELDS_YAML_URL =
-  'https://raw.githubusercontent.com/cloudflare/cloudflare-docs/production/src/content/fields/index.yaml';
+const BASE_URL = 'https://raw.githubusercontent.com/cloudflare/cloudflare-docs/production';
+const FIELDS_YAML_URL = `${BASE_URL}/src/content/fields/index.yaml`;
+const FUNCTIONS_MDX_URL = `${BASE_URL}/src/content/docs/ruleset-engine/rules-language/functions.mdx`;
 
-// Map Cloudflare docs data_type to our FieldType.
-// Note: Cloudflare docs use "Number" as a generic numeric type.
-// In the expression engine these behave as integers for comparison
-// purposes (eq, ne, lt, gt, in). We map Number → Integer since
-// that's the practical behavior, and flag Float only for lat/lon.
+// ── Type Mapping ─────────────────────────────────────────────────────
+
+// Cloudflare docs use "Number" as a generic numeric type. In the
+// expression engine these behave as integers for comparison purposes.
+// We map Number → Integer except for known float fields.
 const TYPE_MAP: Record<string, string> = {
   'String': 'String',
   'Integer': 'Integer',
@@ -48,8 +48,9 @@ const TYPE_MAP: Record<string, string> = {
   'Map<Number>': 'Map',
 };
 
-// Fields where Number should map to Float instead of Integer
 const FLOAT_FIELDS = new Set(['ip.src.lat', 'ip.src.lon']);
+
+// ── Interfaces ───────────────────────────────────────────────────────
 
 interface CloudflareField {
   name: string;
@@ -64,27 +65,91 @@ interface LocalField {
   type: string;
   deprecated?: boolean;
   replacement?: string;
-  phases?: string[];
+}
+
+interface ParsedFunction {
+  name: string;
+  returnType: string;
+}
+
+interface SyncSummary {
+  fieldsAdded: string[];
+  fieldsDeprecated: string[];
+  fieldsTypeChanged: string[];
+  functionsAdded: string[];
+  functionsRemoved: string[];
+}
+
+// ── Fetch ────────────────────────────────────────────────────────────
+
+async function fetchText(url: string): Promise<string> {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Failed to fetch ${url}: ${response.status}`);
+  return response.text();
 }
 
 async function fetchCloudflareFields(): Promise<CloudflareField[]> {
-  console.log(`Fetching fields from Cloudflare docs...`);
-  const response = await fetch(FIELDS_YAML_URL);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch: ${response.status} ${response.statusText}`);
-  }
-  const yamlText = await response.text();
+  console.log('Fetching fields from Cloudflare docs...');
+  const yamlText = await fetchText(FIELDS_YAML_URL);
   const parsed = parseYaml(yamlText) as { entries: CloudflareField[] };
-  const fields = parsed.entries;
-  console.log(`  Found ${fields.length} fields in Cloudflare docs`);
-  return fields;
+  console.log(`  Found ${parsed.entries.length} fields`);
+  return parsed.entries;
 }
+
+async function fetchCloudflareFunctions(): Promise<ParsedFunction[]> {
+  console.log('Fetching functions from Cloudflare docs...');
+  const mdx = await fetchText(FUNCTIONS_MDX_URL);
+  const functions = parseFunctionsMdx(mdx);
+  console.log(`  Found ${functions.length} functions`);
+  return functions;
+}
+
+// ── MDX Parsing ──────────────────────────────────────────────────────
+
+function parseFunctionsMdx(mdx: string): ParsedFunction[] {
+  const functions: ParsedFunction[] = [];
+
+  // Split on ### ` headings — each is a function
+  const sections = mdx.split(/^### `/m);
+
+  for (const section of sections.slice(1)) {
+    // Function name is everything before the closing backtick
+    const nameMatch = section.match(/^([a-z_][a-z0-9_]*)`/);
+    if (!nameMatch) continue;
+
+    const name = nameMatch[1];
+
+    // Return type is in <Type text="..." /> after the signature line
+    // Pattern: ): <Type text="ReturnType" />
+    const returnTypeMatch = section.match(/\).*?<Type\s+text="([^"]+)"/);
+    const returnType = returnTypeMatch ? mapMdxType(returnTypeMatch[1]) : 'String';
+
+    functions.push({ name, returnType });
+  }
+
+  return functions;
+}
+
+function mapMdxType(mdxType: string): string {
+  const map: Record<string, string> = {
+    'String': 'String',
+    'Integer': 'Integer',
+    'Number': 'Integer',
+    'Boolean': 'Boolean',
+    'Bytes': 'Bytes',
+    'IP address': 'IP',
+    'IP Address': 'IP',
+    'Array': 'Array',
+    'Map': 'Map',
+  };
+  return map[mdxType] || 'String';
+}
+
+// ── Local Schema Parsing ─────────────────────────────────────────────
 
 function parseLocalFields(): LocalField[] {
   const content = readFileSync(FIELDS_TS_PATH, 'utf-8');
   const fields: LocalField[] = [];
-
-  // Parse field entries from the FIELDS array
   const fieldRegex = /\{\s*name:\s*'([^']+)',\s*type:\s*'([^']+)'(?:,\s*deprecated:\s*(true))?(?:,\s*replacement:\s*'([^']+)')?/g;
   let match;
   while ((match = fieldRegex.exec(content)) !== null) {
@@ -95,124 +160,228 @@ function parseLocalFields(): LocalField[] {
       replacement: match[4] || undefined,
     });
   }
-
-  console.log(`  Found ${fields.length} fields in local schema`);
+  console.log(`  Found ${fields.length} local fields`);
   return fields;
 }
 
+function parseLocalFunctions(): string[] {
+  const content = readFileSync(
+    resolve(__dirname, '../src/schemas/functions.ts'),
+    'utf-8',
+  );
+  const names: string[] = [];
+  // Match top-level function entries: lines starting with "  {" followed by name:
+  // This avoids matching parameter name: fields which are nested deeper
+  const regex = /^\s{2}\{\s*\n\s+name:\s*'([^']+)'/gm;
+  let match;
+  while ((match = regex.exec(content)) !== null) {
+    names.push(match[1]);
+  }
+  console.log(`  Found ${names.length} local functions`);
+  return names;
+}
+
+// ── Comparison ───────────────────────────────────────────────────────
+
+function resolveType(cf: CloudflareField): string {
+  if (FLOAT_FIELDS.has(cf.name) && cf.data_type === 'Number') return 'Float';
+  return TYPE_MAP[cf.data_type] || cf.data_type;
+}
+
 function compareFields(
-  cloudflare: CloudflareField[],
-  local: LocalField[],
-): { added: CloudflareField[]; removed: LocalField[]; typeChanged: { cf: CloudflareField; local: LocalField }[] } {
-  const cfMap = new Map(cloudflare.map(f => [f.name, f]));
-  const localMap = new Map(local.map(f => [f.name, f]));
+  cfFields: CloudflareField[],
+  localFields: LocalField[],
+): { added: CloudflareField[]; deprecated: LocalField[]; typeChanged: { name: string; from: string; to: string }[] } {
+  const cfMap = new Map(cfFields.map(f => [f.name, f]));
+  const localMap = new Map(localFields.map(f => [f.name, f]));
 
   const added: CloudflareField[] = [];
-  const removed: LocalField[] = [];
-  const typeChanged: { cf: CloudflareField; local: LocalField }[] = [];
+  const deprecated: LocalField[] = [];
+  const typeChanged: { name: string; from: string; to: string }[] = [];
 
-  // Fields in CF docs but not in our schema
-  for (const cf of cloudflare) {
+  for (const cf of cfFields) {
     if (!localMap.has(cf.name)) {
       added.push(cf);
     } else {
-      // Check type match
-      const localField = localMap.get(cf.name)!;
-      let expectedType = TYPE_MAP[cf.data_type] || cf.data_type;
-      if (FLOAT_FIELDS.has(cf.name) && cf.data_type === 'Number') {
-        expectedType = 'Float';
-      }
-      if (localField.type !== expectedType) {
-        typeChanged.push({ cf, local: localField });
+      const local = localMap.get(cf.name)!;
+      const expectedType = resolveType(cf);
+      if (local.type !== expectedType) {
+        typeChanged.push({ name: cf.name, from: local.type, to: expectedType });
       }
     }
   }
 
-  // Fields in our schema but not in CF docs (excluding deprecated aliases)
-  for (const local of localMap.values()) {
+  // Fields in our schema not in docs (and not already deprecated)
+  for (const local of localFields) {
     if (!cfMap.has(local.name) && !local.deprecated) {
-      removed.push(local);
+      deprecated.push(local);
     }
   }
 
-  return { added, removed, typeChanged };
+  return { added, deprecated, typeChanged };
 }
 
-function generateFieldEntry(cf: CloudflareField): string {
-  let type = TYPE_MAP[cf.data_type] || cf.data_type;
-  if (FLOAT_FIELDS.has(cf.name) && cf.data_type === 'Number') {
-    type = 'Float';
-  }
-  return `  { name: '${cf.name}', type: '${type}' },`;
+function compareFunctions(
+  cfFunctions: ParsedFunction[],
+  localFunctions: string[],
+): { added: ParsedFunction[]; removed: string[] } {
+  const cfSet = new Set(cfFunctions.map(f => f.name));
+  const localSet = new Set(localFunctions);
+
+  const added = cfFunctions.filter(f => !localSet.has(f.name));
+  const removed = localFunctions.filter(f => !cfSet.has(f));
+
+  return { added, removed };
 }
+
+// ── Apply Changes ────────────────────────────────────────────────────
+
+function applyFieldChanges(
+  added: CloudflareField[],
+  deprecated: LocalField[],
+  typeChanged: { name: string; from: string; to: string }[],
+): void {
+  let content = readFileSync(FIELDS_TS_PATH, 'utf-8');
+
+  // Add new fields before the closing of the FIELDS array
+  if (added.length > 0) {
+    const newEntries = added
+      .map(cf => `  { name: '${cf.name}', type: '${resolveType(cf)}' },`)
+      .join('\n');
+    const marker = '/** Build a lookup map for fast field resolution */';
+    const idx = content.indexOf(marker);
+    if (idx === -1) {
+      console.error('Could not find insertion point in fields.ts');
+      return;
+    }
+    const syncComment = `  // ── Auto-synced from Cloudflare docs (${today()}) ──────────\n`;
+    content = content.substring(0, idx - 3) + '\n' + syncComment + newEntries + '\n];\n\n' + content.substring(idx);
+  }
+
+  // Mark removed fields as deprecated
+  for (const local of deprecated) {
+    const pattern = `{ name: '${local.name}', type: '${local.type}' }`;
+    const replacement = `{ name: '${local.name}', type: '${local.type}', deprecated: true, notes: 'Removed from Cloudflare docs ${today()}' }`;
+    content = content.replace(pattern, replacement);
+  }
+
+  // Update changed types
+  for (const change of typeChanged) {
+    // Only update if it's a simple entry without other properties
+    const pattern = `name: '${change.name}', type: '${change.from}'`;
+    const replacement = `name: '${change.name}', type: '${change.to}'`;
+    content = content.replace(pattern, replacement);
+  }
+
+  writeFileSync(FIELDS_TS_PATH, content, 'utf-8');
+}
+
+function today(): string {
+  return new Date().toISOString().split('T')[0];
+}
+
+// ── Main ─────────────────────────────────────────────────────────────
 
 async function main() {
   const applyMode = process.argv.includes('--apply');
 
-  const cloudflareFields = await fetchCloudflareFields();
+  // Fetch from Cloudflare docs
+  const [cfFields, cfFunctions] = await Promise.all([
+    fetchCloudflareFields(),
+    fetchCloudflareFunctions(),
+  ]);
+
+  // Parse local schemas
   const localFields = parseLocalFields();
-  const diff = compareFields(cloudflareFields, localFields);
+  const localFunctions = parseLocalFunctions();
 
-  console.log('\n── Comparison Results ──────────────────────────────────');
+  // Compare
+  const fieldDiff = compareFields(cfFields, localFields);
+  const funcDiff = compareFunctions(cfFunctions, localFunctions);
 
-  if (diff.added.length === 0 && diff.removed.length === 0 && diff.typeChanged.length === 0) {
-    console.log('\n✓ Schema is up to date with Cloudflare docs');
+  const summary: SyncSummary = {
+    fieldsAdded: fieldDiff.added.map(f => f.name),
+    fieldsDeprecated: fieldDiff.deprecated.map(f => f.name),
+    fieldsTypeChanged: fieldDiff.typeChanged.map(c => `${c.name}: ${c.from} → ${c.to}`),
+    functionsAdded: funcDiff.added.map(f => f.name),
+    functionsRemoved: funcDiff.removed,
+  };
+
+  // Report
+  console.log('\n── Sync Results ────────────────────────────────────────');
+
+  const totalChanges =
+    summary.fieldsAdded.length +
+    summary.fieldsDeprecated.length +
+    summary.fieldsTypeChanged.length +
+    summary.functionsAdded.length +
+    summary.functionsRemoved.length;
+
+  if (totalChanges === 0) {
+    console.log('\n✓ All schemas are up to date with Cloudflare docs');
     process.exit(0);
   }
 
-  if (diff.added.length > 0) {
-    console.log(`\n${diff.added.length} new field(s) in Cloudflare docs:`);
-    for (const f of diff.added) {
-      console.log(`  + ${f.name} (${f.data_type})`);
-    }
+  if (summary.fieldsAdded.length > 0) {
+    console.log(`\n+ ${summary.fieldsAdded.length} new field(s):`);
+    for (const name of summary.fieldsAdded) console.log(`    ${name}`);
   }
 
-  if (diff.removed.length > 0) {
-    console.log(`\n${diff.removed.length} field(s) in local schema but not in Cloudflare docs:`);
-    for (const f of diff.removed) {
-      console.log(`  - ${f.name} (${f.type})`);
-    }
+  if (summary.fieldsDeprecated.length > 0) {
+    console.log(`\n⚠ ${summary.fieldsDeprecated.length} field(s) to deprecate (removed from docs):`);
+    for (const name of summary.fieldsDeprecated) console.log(`    ${name}`);
   }
 
-  if (diff.typeChanged.length > 0) {
-    console.log(`\n${diff.typeChanged.length} field(s) with type changes:`);
-    for (const { cf, local } of diff.typeChanged) {
-      console.log(`  ~ ${cf.name}: ${local.type} → ${TYPE_MAP[cf.data_type] || cf.data_type}`);
-    }
+  if (summary.fieldsTypeChanged.length > 0) {
+    console.log(`\n~ ${summary.fieldsTypeChanged.length} field type change(s):`);
+    for (const desc of summary.fieldsTypeChanged) console.log(`    ${desc}`);
+  }
+
+  if (summary.functionsAdded.length > 0) {
+    console.log(`\n+ ${summary.functionsAdded.length} new function(s):`);
+    for (const name of summary.functionsAdded) console.log(`    ${name}`);
+  }
+
+  if (summary.functionsRemoved.length > 0) {
+    console.log(`\n⚠ ${summary.functionsRemoved.length} function(s) not found in docs:`);
+    for (const name of summary.functionsRemoved) console.log(`    ${name}`);
   }
 
   if (!applyMode) {
-    console.log('\nRun with --apply to add new fields to src/schemas/fields.ts');
-    // Exit with code 1 if there are differences (useful for CI)
-    process.exit(diff.added.length > 0 || diff.typeChanged.length > 0 ? 1 : 0);
+    console.log('\nRun with --apply to apply changes to schema files');
+    process.exit(1);
   }
 
-  // Apply: add new fields to fields.ts
-  if (diff.added.length > 0) {
-    let content = readFileSync(FIELDS_TS_PATH, 'utf-8');
-
-    const newEntries = diff.added.map(generateFieldEntry).join('\n');
-    const insertMarker = '/** Build a lookup map for fast field resolution */';
-    const insertPoint = content.indexOf(insertMarker);
-
-    if (insertPoint === -1) {
-      console.error('Could not find insertion point in fields.ts');
-      process.exit(1);
-    }
-
-    const newSection = `\n  // ── Auto-synced from Cloudflare docs (${new Date().toISOString().split('T')[0]}) ──\n${newEntries}\n];\n\n`;
-    content = content.substring(0, insertPoint - 3) + newSection + content.substring(insertPoint);
-
-    writeFileSync(FIELDS_TS_PATH, content, 'utf-8');
-    console.log(`\n✓ Added ${diff.added.length} new field(s) to ${FIELDS_TS_PATH}`);
+  // Apply field changes
+  if (fieldDiff.added.length > 0 || fieldDiff.deprecated.length > 0 || fieldDiff.typeChanged.length > 0) {
+    applyFieldChanges(fieldDiff.added, fieldDiff.deprecated, fieldDiff.typeChanged);
+    console.log(`\n✓ Applied field changes to ${FIELDS_TS_PATH}`);
   }
 
-  if (diff.typeChanged.length > 0) {
-    console.log('\n⚠ Type changes detected but not auto-applied — review manually:');
-    for (const { cf, local } of diff.typeChanged) {
-      console.log(`  ${cf.name}: local="${local.type}" docs="${TYPE_MAP[cf.data_type] || cf.data_type}"`);
+  // Report function changes (manual for now — functions have complex signatures)
+  if (funcDiff.added.length > 0) {
+    console.log('\n⚠ New functions detected — add to src/schemas/functions.ts manually:');
+    for (const f of funcDiff.added) {
+      console.log(`    ${f.name}() → ${f.returnType}`);
     }
   }
+
+  // Write summary for GitHub Actions PR body
+  const summaryPath = resolve(__dirname, '../sync-summary.md');
+  const summaryMd = [
+    '## Cloudflare Docs Sync',
+    '',
+    `Synced on ${today()} from [cloudflare/cloudflare-docs](https://github.com/cloudflare/cloudflare-docs).`,
+    '',
+    summary.fieldsAdded.length > 0 ? `### New Fields (${summary.fieldsAdded.length})\n${summary.fieldsAdded.map(n => `- \`${n}\``).join('\n')}` : '',
+    summary.fieldsDeprecated.length > 0 ? `### Deprecated Fields (${summary.fieldsDeprecated.length})\n${summary.fieldsDeprecated.map(n => `- \`${n}\``).join('\n')}` : '',
+    summary.fieldsTypeChanged.length > 0 ? `### Type Changes (${summary.fieldsTypeChanged.length})\n${summary.fieldsTypeChanged.map(d => `- ${d}`).join('\n')}` : '',
+    summary.functionsAdded.length > 0 ? `### New Functions (${summary.functionsAdded.length})\n${summary.functionsAdded.map(n => `- \`${n}()\``).join('\n')}\n\n> These need to be added to \`src/schemas/functions.ts\` manually.` : '',
+    summary.functionsRemoved.length > 0 ? `### Functions Not In Docs (${summary.functionsRemoved.length})\n${summary.functionsRemoved.map(n => `- \`${n}()\``).join('\n')}` : '',
+  ].filter(Boolean).join('\n\n');
+
+  writeFileSync(summaryPath, summaryMd, 'utf-8');
+  console.log(`\n✓ Wrote sync summary to ${summaryPath}`);
 }
 
 main().catch(err => {

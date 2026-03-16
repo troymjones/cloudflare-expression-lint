@@ -26,38 +26,36 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Check for Cloudflare docs updates
+      - name: Check for updates
         id: check
-        run: npx tsx scripts/sync-cloudflare-docs.ts 2>&1 | tee /tmp/sync-output.txt || true
+        run: npx tsx scripts/sync-cloudflare-docs.ts 2>&1 | tee /tmp/sync-check.txt
         continue-on-error: true
 
-      - name: Apply updates if found
+      - name: Apply updates
         id: apply
         if: steps.check.outcome == 'failure'
         run: |
-          npx tsx scripts/sync-cloudflare-docs.ts --apply 2>&1 | tee /tmp/apply-output.txt
-          # Check if files actually changed
-          if git diff --quiet src/schemas/fields.ts; then
+          npx tsx scripts/sync-cloudflare-docs.ts --apply
+          if git diff --quiet; then
             echo "changes=false" >> $GITHUB_OUTPUT
           else
             echo "changes=true" >> $GITHUB_OUTPUT
           fi
+
+      - name: Run tests after sync
+        if: steps.apply.outputs.changes == 'true'
+        run: |
+          npm run build
+          npm test
 
       - name: Create Pull Request
         if: steps.apply.outputs.changes == 'true'
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          commit-message: 'Update fields from Cloudflare docs'
-          title: 'Sync fields from Cloudflare docs'
-          body: |
-            Automated sync from [cloudflare/cloudflare-docs](https://github.com/cloudflare/cloudflare-docs).
-
-            ```
-            ${{ steps.apply.outputs.changes == 'true' && 'See commit diff for details' || 'No changes' }}
-            ```
-
-            Review the new fields and ensure types are correct before merging.
+          commit-message: 'Sync fields and functions from Cloudflare docs'
+          title: 'Automated: Sync schemas from Cloudflare docs'
+          body-path: sync-summary.md
           branch: automated/sync-cloudflare-docs
           delete-branch: true
           labels: automated,schema-update
