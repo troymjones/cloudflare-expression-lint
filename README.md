@@ -232,6 +232,10 @@ All standard Cloudflare functions are supported, with context-aware validation:
 | `header-key-not-lowercase` | warning | Header map key should be lowercase |
 | `invalid-list-name` | warning | Named list name doesn't match Cloudflare naming rules |
 | `invalid-cidr-mask` | error | CIDR mask out of valid range |
+| `invalid-wildcard-pattern` | warning | Wildcard contains `**` (prohibited) |
+| `invalid-list-name` | warning | Named list name doesn't follow Cloudflare naming rules |
+| `empty-in-list` | warning | Empty `in {}` list will never match |
+| `too-many-regex` | warning | More than 64 regex patterns per expression |
 | `prefer-bare-boolean` | info | Prefer `ssl` over `ssl == true` |
 
 ## How Mappings Work

@@ -12,6 +12,8 @@ jobs:
       contents: read
       id-token: write
 
+    environment: npm-publish
+
     steps:
       - uses: actions/checkout@v4
 
@@ -31,7 +33,7 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Publish
+      - name: Publish with provenance
         run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
