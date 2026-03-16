@@ -18,6 +18,12 @@
       "types": "./dist/eslint-plugin.d.ts"
     }
   },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE",
+    "CLAUDE.md"
+  ],
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
@@ -37,7 +43,16 @@
     "wirefilter",
     "rules-language"
   ],
+  "author": "Troy Jones",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/troymjones/cloudflare-expression-lint.git"
+  },
+  "bugs": {
+    "url": "https://github.com/troymjones/cloudflare-expression-lint/issues"
+  },
+  "homepage": "https://github.com/troymjones/cloudflare-expression-lint#readme",
   "devDependencies": {
     "@types/node": "^20.11.0",
     "typescript": "^5.3.3",
