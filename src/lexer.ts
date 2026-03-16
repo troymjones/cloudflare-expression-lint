@@ -142,6 +142,42 @@ export function tokenize(input: string): Token[] {
     const startCol = col();
     const ch = peek();
 
+    // ── Raw String Literal (r"...", r#"..."#, r##"..."##, etc.) ─────
+    if (ch === 'r' && (peekAt(1) === '"' || peekAt(1) === '#')) {
+      advance(); // consume 'r'
+      let hashCount = 0;
+      while (peek() === '#') {
+        advance();
+        hashCount++;
+      }
+      if (peek() !== '"') {
+        throw new Error(`Expected '"' after r${'#'.repeat(hashCount)} at position ${pos}`);
+      }
+      advance(); // consume opening "
+      let value = '';
+      const closingDelim = '"' + '#'.repeat(hashCount);
+      while (pos < input.length) {
+        if (input[pos] === '"') {
+          // Check if followed by the right number of #'s
+          let matched = true;
+          for (let h = 0; h < hashCount; h++) {
+            if (input[pos + 1 + h] !== '#') {
+              matched = false;
+              break;
+            }
+          }
+          if (matched) {
+            advance(); // consume closing "
+            for (let h = 0; h < hashCount; h++) advance(); // consume #'s
+            break;
+          }
+        }
+        value += advance();
+      }
+      addToken(TokenType.RawString, value, startPos, startLine, startCol);
+      continue;
+    }
+
     // ── String Literal ───────────────────────────────────────────────
     if (ch === '"') {
       const value = readString();

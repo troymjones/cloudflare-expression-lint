@@ -176,24 +176,59 @@ All standard Cloudflare functions are supported, with context-aware validation:
 | `field-not-in-phase` | error | Field not available in the specified Cloudflare phase |
 | `function-not-in-context` | error | Function not available in the expression context (filter vs rewrite) |
 | `function-max-exceeded` | error | Function used more times than allowed |
+| `operator-type-mismatch` | error | Operator not compatible with field type (e.g., `contains` on IP) |
 | `deprecated-field` | warning | Field is deprecated; replacement suggested |
 | `expression-too-long` | warning | Expression exceeds 4096 character limit |
+| `header-key-not-lowercase` | warning | Header map key should be lowercase |
+| `invalid-list-name` | warning | Named list name doesn't match Cloudflare naming rules |
+| `invalid-cidr-mask` | error | CIDR mask out of valid range |
+| `prefer-bare-boolean` | info | Prefer `ssl` over `ssl == true` |
 
-## YAML Auto-Detection
+## YAML Scanner
 
-When scanning YAML files, the tool automatically:
+The YAML scanner detects `expression` keys (the standard Cloudflare Terraform provider attribute name) by default. Phase is inferred from YAML parent keys that match Cloudflare phase names (e.g., `http_request_firewall_custom`, `cache_rules`).
 
-1. **Detects expression keys**: `expression`, `rewrite_expression`, `source_url_expression`, `target_url_expression`
-2. **Infers expression type**: filter, rewrite, or redirect based on the key name
-3. **Infers Cloudflare phase** from parent YAML context:
-   - `waf_rules` / `custom_rules` → `http_request_firewall_custom`
-   - `cache_rules` → `http_request_cache_settings`
-   - `configuration_rules` → `http_config_settings`
-   - `transform_request_header_rules` → `http_request_late_transform`
-   - `transform_response_header_rules` → `http_response_headers_transform`
-   - `transform_url_rewrite_rules` → `http_request_transform`
-   - `single_redirects` → `http_request_dynamic_redirect`
-   - And more...
+### Custom Mappings
+
+Since every team structures their YAML differently, the scanner accepts custom key and phase mappings:
+
+```typescript
+import { scanYaml } from 'cloudflare-expression-lint';
+
+const result = scanYaml(yamlContent, 'config.yaml', {
+  // Add custom expression keys (merged with default 'expression')
+  expressionKeys: {
+    'rewrite_expression': { type: 'rewrite_url', phaseHint: 'http_request_transform' },
+    'source_url_expression': { type: 'filter', phaseHint: 'http_request_dynamic_redirect' },
+    'target_url_expression': { type: 'redirect_target', phaseHint: 'http_request_dynamic_redirect' },
+    'my_custom_filter': { type: 'filter' },
+  },
+
+  // Add custom YAML key → phase mappings (merged with defaults)
+  phaseMappings: {
+    'waf_rules': 'http_request_firewall_custom',
+    'my_transform_rules': 'http_request_transform',
+  },
+});
+```
+
+### Built-in Phase Mappings
+
+The built-in defaults only include Cloudflare phase names used as YAML keys and a few common shorthands:
+
+| YAML Key | Phase |
+|----------|-------|
+| `http_request_firewall_custom` | `http_request_firewall_custom` |
+| `http_ratelimit` | `http_ratelimit` |
+| `http_request_cache_settings` | `http_request_cache_settings` |
+| `http_request_transform` | `http_request_transform` |
+| `cache_rules` | `http_request_cache_settings` |
+| `rate_limit_rules` | `http_ratelimit` |
+| `single_redirects` | `http_request_dynamic_redirect` |
+| `origin_rules` | `http_request_origin` |
+| ...and all other `http_*` phase names | *(self-mapping)* |
+
+To use entirely custom mappings: `{ replacePhaseMappings: true, phaseMappings: { ... } }`
 
 ## CI/CD Integration
 

@@ -193,7 +193,7 @@ class Parser {
     while (this.peekType() !== TokenType.RightBrace && !this.isAtEnd()) {
       const token = this.peek();
 
-      if (token.type === TokenType.String) {
+      if (token.type === TokenType.String || token.type === TokenType.RawString) {
         this.advance();
         values.push({ kind: 'StringLiteral', value: token.value, position: token.position });
       } else if (token.type === TokenType.Integer) {
@@ -248,6 +248,7 @@ class Parser {
         return { kind: 'BooleanLiteral', value: token.value === 'true', position: token.position };
 
       case TokenType.String:
+      case TokenType.RawString:
         this.advance();
         return { kind: 'StringLiteral', value: token.value, position: token.position };
 
@@ -318,7 +319,7 @@ class Parser {
       } else {
         // Bracket access after function result - just consume it as part of the expression
         this.advance(); // [
-        if (this.peekType() === TokenType.String || this.peekType() === TokenType.Integer) {
+        if (this.peekType() === TokenType.String || this.peekType() === TokenType.RawString || this.peekType() === TokenType.Integer) {
           this.advance(); // key/index
         }
         this.expect(TokenType.RightBracket);
@@ -340,7 +341,7 @@ class Parser {
     while (this.peekType() === TokenType.LeftBracket) {
       this.advance(); // consume [
       const inner = this.peek();
-      if (inner.type === TokenType.String) {
+      if (inner.type === TokenType.String || inner.type === TokenType.RawString) {
         mapKey = inner.value;
         this.advance();
       } else if (inner.type === TokenType.Integer) {

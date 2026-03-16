@@ -4,11 +4,18 @@
  * Extracts Cloudflare expressions from YAML config files,
  * determines their context (filter vs rewrite vs redirect),
  * and validates them.
+ *
+ * The scanner ships with minimal built-in mappings that cover
+ * standard Cloudflare Terraform provider attribute names. Users
+ * can supply custom mappings via ScannerOptions to match their
+ * own YAML schema.
  */
 
 import { parse as parseYaml } from 'yaml';
 import { validate } from './validator.js';
 import type { ValidationContext, LintResult, ExpressionType } from './types.js';
+
+// ── Public Types ─────────────────────────────────────────────────────
 
 export interface YAMLExpressionLocation {
   file: string;
@@ -26,40 +33,123 @@ export interface YAMLScanResult {
 }
 
 /**
- * YAML key patterns that contain Cloudflare expressions,
- * mapped to their expression type and phase inference.
+ * Defines how a YAML key containing an expression should be interpreted.
  */
-const EXPRESSION_KEYS: Record<string, { type: ExpressionType; phaseHint?: string }> = {
+export interface ExpressionKeyMapping {
+  /** The expression type (filter, rewrite_url, etc.) */
+  type: ExpressionType;
+  /** If set, overrides any parent-inferred phase for this key */
+  phaseHint?: string;
+}
+
+/**
+ * Maps a YAML parent key to a Cloudflare ruleset phase.
+ *
+ * When the scanner encounters a YAML object with this key, all
+ * descendant `expression` values inherit the specified phase.
+ *
+ * Example: `{ "rules": "http_request_firewall_custom" }` means
+ * any `expression` found inside a `rules:` block is treated as
+ * belonging to the `http_request_firewall_custom` phase.
+ */
+export type PhaseMapping = Record<string, string>;
+
+/**
+ * Options for customizing how the YAML scanner detects and
+ * interprets Cloudflare expressions.
+ */
+export interface ScannerOptions {
+  /**
+   * Map of YAML key names to expression type + optional phase.
+   * Merged with (and overrides) the built-in defaults.
+   *
+   * Built-in keys: expression, rewrite_expression,
+   * source_url_expression, target_url_expression
+   */
+  expressionKeys?: Record<string, ExpressionKeyMapping>;
+
+  /**
+   * Map of YAML parent key names to Cloudflare phases.
+   * Merged with (and overrides) the built-in defaults.
+   *
+   * Example: `{ "firewall_rules": "http_request_firewall_custom" }`
+   */
+  phaseMappings?: PhaseMapping;
+
+  /**
+   * If true, replaces the built-in expression key defaults
+   * instead of merging with them.
+   */
+  replaceExpressionKeys?: boolean;
+
+  /**
+   * If true, replaces the built-in phase mapping defaults
+   * instead of merging with them.
+   */
+  replacePhaseMappings?: boolean;
+}
+
+// ── Built-in Defaults ────────────────────────────────────────────────
+
+/**
+ * Default YAML keys that contain Cloudflare expressions.
+ *
+ * Only includes `expression` — the standard attribute name used by the
+ * Cloudflare Terraform provider (cloudflare_ruleset.rules.expression).
+ *
+ * Users should add their own keys if their YAML schema uses different
+ * names for filter, rewrite, or redirect expressions.
+ */
+const DEFAULT_EXPRESSION_KEYS: Record<string, ExpressionKeyMapping> = {
   'expression': { type: 'filter' },
-  'rewrite_expression': { type: 'rewrite_url', phaseHint: 'http_request_transform' },
-  'source_url_expression': { type: 'filter', phaseHint: 'http_request_dynamic_redirect' },
-  'target_url_expression': { type: 'redirect_target', phaseHint: 'http_request_dynamic_redirect' },
-  'target_url_value': { type: 'redirect_target', phaseHint: 'http_request_dynamic_redirect' },
 };
 
 /**
- * YAML parent key patterns that help infer the Cloudflare phase.
+ * Default phase inference from YAML parent keys.
+ *
+ * These are intentionally minimal — only mappings that directly
+ * correspond to Cloudflare phase names or widely-used conventions.
+ * Users should add their own mappings for custom YAML schemas.
  */
-const PHASE_CONTEXT_KEYS: Record<string, string> = {
-  'waf_rules': 'http_request_firewall_custom',
-  'custom_rules': 'http_request_firewall_custom',
-  'ratelimit_rules': 'http_ratelimit',
-  'rate_limit_rules': 'http_ratelimit',
+const DEFAULT_PHASE_MAPPINGS: PhaseMapping = {
+  // Direct Cloudflare phase names (if someone uses these as YAML keys)
+  'http_request_firewall_custom': 'http_request_firewall_custom',
+  'http_ratelimit': 'http_ratelimit',
+  'http_request_cache_settings': 'http_request_cache_settings',
+  'http_config_settings': 'http_config_settings',
+  'http_request_late_transform': 'http_request_late_transform',
+  'http_response_headers_transform': 'http_response_headers_transform',
+  'http_request_transform': 'http_request_transform',
+  'http_request_dynamic_redirect': 'http_request_dynamic_redirect',
+  'http_request_origin': 'http_request_origin',
+  'http_request_snippets': 'http_request_snippets',
+  'http_request_redirect': 'http_request_redirect',
+
+  // Common shorthand keys used in YAML configs
   'cache_rules': 'http_request_cache_settings',
-  'configuration_rules': 'http_config_settings',
-  'transform_request_header_rules': 'http_request_late_transform',
-  'transform_request_headers_rules_default': 'http_request_late_transform',
-  'transform_response_header_rules': 'http_response_headers_transform',
-  'transform_url_rewrite_rules': 'http_request_transform',
+  'rate_limit_rules': 'http_ratelimit',
+  'ratelimit_rules': 'http_ratelimit',
   'single_redirects': 'http_request_dynamic_redirect',
   'origin_rules': 'http_request_origin',
-  'snippets': 'http_request_snippets',
 };
+
+// ── Public API ───────────────────────────────────────────────────────
 
 /**
  * Scan a YAML file content for Cloudflare expressions and validate them.
+ *
+ * @param content - Raw YAML file content
+ * @param filePath - File path (used in diagnostics)
+ * @param options - Optional scanner customization
  */
-export function scanYaml(content: string, filePath: string): YAMLScanResult {
+export function scanYaml(
+  content: string,
+  filePath: string,
+  options?: ScannerOptions,
+): YAMLScanResult {
+  const expressionKeys = buildExpressionKeys(options);
+  const phaseMappings = buildPhaseMappings(options);
+
   let doc: unknown;
   try {
     doc = parseYaml(content);
@@ -72,7 +162,7 @@ export function scanYaml(content: string, filePath: string): YAMLScanResult {
   }
 
   const locations: YAMLExpressionLocation[] = [];
-  walkYaml(doc, [], locations, filePath, undefined);
+  walkYaml(doc, [], locations, filePath, undefined, expressionKeys, phaseMappings);
 
   const expressions = locations.map(loc => {
     const ctx: ValidationContext = {
@@ -88,6 +178,38 @@ export function scanYaml(content: string, filePath: string): YAMLScanResult {
 }
 
 /**
+ * Get the current default expression key mappings.
+ * Useful for inspecting or extending the defaults.
+ */
+export function getDefaultExpressionKeys(): Record<string, ExpressionKeyMapping> {
+  return { ...DEFAULT_EXPRESSION_KEYS };
+}
+
+/**
+ * Get the current default phase mappings.
+ * Useful for inspecting or extending the defaults.
+ */
+export function getDefaultPhaseMappings(): PhaseMapping {
+  return { ...DEFAULT_PHASE_MAPPINGS };
+}
+
+// ── Internal Helpers ─────────────────────────────────────────────────
+
+function buildExpressionKeys(
+  options?: ScannerOptions,
+): Record<string, ExpressionKeyMapping> {
+  if (!options?.expressionKeys) return DEFAULT_EXPRESSION_KEYS;
+  if (options.replaceExpressionKeys) return options.expressionKeys;
+  return { ...DEFAULT_EXPRESSION_KEYS, ...options.expressionKeys };
+}
+
+function buildPhaseMappings(options?: ScannerOptions): PhaseMapping {
+  if (!options?.phaseMappings) return DEFAULT_PHASE_MAPPINGS;
+  if (options.replacePhaseMappings) return options.phaseMappings;
+  return { ...DEFAULT_PHASE_MAPPINGS, ...options.phaseMappings };
+}
+
+/**
  * Recursively walk a parsed YAML structure and extract expressions.
  */
 function walkYaml(
@@ -96,6 +218,8 @@ function walkYaml(
   results: YAMLExpressionLocation[],
   filePath: string,
   inferredPhase: string | undefined,
+  expressionKeys: Record<string, ExpressionKeyMapping>,
+  phaseMappings: PhaseMapping,
 ): void {
   if (node === null || node === undefined) return;
 
@@ -105,8 +229,8 @@ function walkYaml(
     // Check if any key in this object hints at a phase
     let phase = inferredPhase;
     for (const key of Object.keys(obj)) {
-      if (PHASE_CONTEXT_KEYS[key]) {
-        phase = PHASE_CONTEXT_KEYS[key];
+      if (phaseMappings[key]) {
+        phase = phaseMappings[key];
       }
     }
 
@@ -114,7 +238,7 @@ function walkYaml(
       const keyPath = [...path, key];
 
       // Check if this key is an expression key
-      const exprInfo = EXPRESSION_KEYS[key];
+      const exprInfo = expressionKeys[key];
       if (exprInfo && typeof value === 'string') {
         const exprStr = value.trim();
         if (exprStr) {
@@ -145,11 +269,11 @@ function walkYaml(
       }
 
       // Recurse
-      walkYaml(value, keyPath, results, filePath, phase);
+      walkYaml(value, keyPath, results, filePath, phase, expressionKeys, phaseMappings);
     }
   } else if (Array.isArray(node)) {
     for (let i = 0; i < node.length; i++) {
-      walkYaml(node[i], [...path, `${i}`], results, filePath, inferredPhase);
+      walkYaml(node[i], [...path, `${i}`], results, filePath, inferredPhase, expressionKeys, phaseMappings);
     }
   }
 }
