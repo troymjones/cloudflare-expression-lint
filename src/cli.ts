@@ -41,6 +41,7 @@ interface CLIOptions {
   format: 'text' | 'json';
   quiet: boolean;
   warnExitCode: number;
+  ignoreCodes: string[];
   help: boolean;
 }
 
@@ -54,6 +55,7 @@ function parseArgs(argv: string[]): CLIOptions {
     format: 'text',
     quiet: false,
     warnExitCode: 0,
+    ignoreCodes: [],
     help: false,
   };
 
@@ -120,6 +122,9 @@ function parseArgs(argv: string[]): CLIOptions {
       case '--warn-exit-code':
         opts.warnExitCode = parseInt(argv[++i], 10);
         break;
+      case '--ignore-code':
+        opts.ignoreCodes.push(argv[++i]);
+        break;
       default:
         if (!arg.startsWith('-')) {
           opts.files.push(arg);
@@ -147,6 +152,7 @@ function buildScannerOptions(opts: CLIOptions): ScannerOptions | undefined {
       const config = JSON.parse(raw) as {
         expressionKeys?: Record<string, ExpressionKeyMapping>;
         phaseMappings?: Record<string, string>;
+        ignoreCodes?: string[];
       };
       if (config.expressionKeys) {
         scannerOpts.expressionKeys = config.expressionKeys;
@@ -155,6 +161,9 @@ function buildScannerOptions(opts: CLIOptions): ScannerOptions | undefined {
       if (config.phaseMappings) {
         scannerOpts.phaseMappings = config.phaseMappings;
         hasOptions = true;
+      }
+      if (config.ignoreCodes) {
+        opts.ignoreCodes.push(...config.ignoreCodes);
       }
     } catch (err) {
       console.error(`Error reading config file ${configPath}: ${err instanceof Error ? err.message : err}`);
@@ -227,6 +236,8 @@ Options:
   --quiet, -q                Only show errors (suppress warnings/info)
   --warn-exit-code <n>       Exit code when warnings found but no errors
                              (default: 0). Use 2 for CI warning status.
+  --ignore-code <code>       Suppress a diagnostic code (repeatable).
+                             Also configurable via "ignoreCodes" in config file.
   --help, -h                 Show this help
 
 Config File:
@@ -272,6 +283,12 @@ Examples:
 `);
 }
 
+function filterDiagnostics(diagnostics: Diagnostic[], ignoreCodes: string[]): Diagnostic[] {
+  if (ignoreCodes.length === 0) return diagnostics;
+  const ignoreSet = new Set(ignoreCodes);
+  return diagnostics.filter(d => !ignoreSet.has(d.code));
+}
+
 function formatDiagnostic(d: Diagnostic): string {
   const prefix = d.severity === 'error' ? '✗' : d.severity === 'warning' ? '⚠' : 'ℹ';
   const pos = d.position !== undefined ? ` (pos ${d.position})` : '';
@@ -305,13 +322,14 @@ async function main(): Promise<void> {
     };
 
     const result = validate(expr, ctx);
+    const diags = filterDiagnostics(result.diagnostics, opts.ignoreCodes);
 
     if (opts.format === 'json') {
-      console.log(JSON.stringify(result, null, 2));
+      console.log(JSON.stringify({ ...result, diagnostics: diags }, null, 2));
     } else {
       const filteredDiags = opts.quiet
-        ? result.diagnostics.filter(d => d.severity === 'error')
-        : result.diagnostics;
+        ? diags.filter(d => d.severity === 'error')
+        : diags;
 
       if (filteredDiags.length === 0) {
         console.log(`✓ Expression is valid`);
@@ -322,8 +340,8 @@ async function main(): Promise<void> {
         }
       }
 
-      if (!result.valid) hasErrors = true;
-      if (result.diagnostics.some(d => d.severity === 'warning')) hasWarnings = true;
+      if (diags.some(d => d.severity === 'error')) hasErrors = true;
+      if (diags.some(d => d.severity === 'warning')) hasWarnings = true;
     }
 
     process.exit(hasErrors ? 1 : hasWarnings ? opts.warnExitCode : 0);
@@ -379,24 +397,25 @@ async function main(): Promise<void> {
 
     for (const expr of scanResult.expressions) {
       totalExpressions++;
-      const filteredDiags = opts.quiet
-        ? expr.result.diagnostics.filter(d => d.severity === 'error')
-        : expr.result.diagnostics;
+      const diags = filterDiagnostics(expr.result.diagnostics, opts.ignoreCodes);
+      const displayDiags = opts.quiet
+        ? diags.filter(d => d.severity === 'error')
+        : diags;
 
-      const errors = expr.result.diagnostics.filter(d => d.severity === 'error').length;
-      const warnings = expr.result.diagnostics.filter(d => d.severity === 'warning').length;
+      const errors = diags.filter(d => d.severity === 'error').length;
+      const warnings = diags.filter(d => d.severity === 'warning').length;
       totalErrors += errors;
       totalWarnings += warnings;
 
-      if (filteredDiags.length > 0) {
+      if (displayDiags.length > 0) {
         console.log(`\n${file} → ${expr.yamlPath}`);
         console.log(`  Expression: ${expr.expression.substring(0, 120)}${expr.expression.length > 120 ? '...' : ''}`);
-        for (const d of filteredDiags) {
+        for (const d of displayDiags) {
           console.log(formatDiagnostic(d));
         }
       }
 
-      if (!expr.result.valid) hasErrors = true;
+      if (errors > 0) hasErrors = true;
       if (warnings > 0) hasWarnings = true;
     }
   }
