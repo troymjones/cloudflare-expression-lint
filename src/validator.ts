@@ -56,8 +56,9 @@ export function validate(expression: string, context: ValidationContext): LintRe
   const walker = new ASTWalker(context, diagnostics);
   walker.walk(ast);
 
-  // Check function usage limits
+  // Check function usage limits and regex count
   walker.checkFunctionLimits();
+  walker.checkRegexCount();
 
   const hasErrors = diagnostics.some(d => d.severity === 'error');
   return { expression, valid: !hasErrors, diagnostics, ast };
@@ -67,6 +68,7 @@ class ASTWalker {
   private context: ValidationContext;
   private diagnostics: Diagnostic[];
   private functionCounts: Map<string, number> = new Map();
+  private regexCount: number = 0;
 
   constructor(context: ValidationContext, diagnostics: Diagnostic[]) {
     this.context = context;
@@ -93,6 +95,8 @@ class ASTWalker {
         this.walk(node.right);
         this.validateOperatorTypes(node);
         this.validateBooleanStyle(node);
+        this.validateWildcardPattern(node);
+        this.countRegexUsage(node);
         break;
 
       case 'Logical':
@@ -109,6 +113,8 @@ class ASTWalker {
         for (const val of node.values) {
           this.walk(val);
         }
+        this.validateInExpressionTypes(node);
+        this.validateEmptyInList(node);
         break;
 
       case 'Group':
@@ -309,6 +315,76 @@ class ASTWalker {
 
       default:
         return undefined;
+    }
+  }
+
+  // ── Wildcard Pattern Validation ─────────────────────────────────────
+
+  private validateWildcardPattern(node: ASTNode): void {
+    if (node.kind !== 'Comparison') return;
+    if (node.operator !== 'wildcard' && node.operator !== 'strict wildcard') return;
+
+    // Check the RHS for double asterisks
+    if (node.right.kind === 'StringLiteral' && node.right.value.includes('**')) {
+      this.diagnostics.push({
+        severity: 'warning',
+        message: `Wildcard pattern contains "**" which is not allowed. Use a single "*" instead.`,
+        code: 'invalid-wildcard-pattern',
+        position: node.right.position,
+      });
+    }
+  }
+
+  // ── Regex Count ────────────────────────────────────────────────────
+
+  private countRegexUsage(node: ASTNode): void {
+    if (node.kind !== 'Comparison') return;
+    if (node.operator === 'matches' || node.operator === '~') {
+      this.regexCount++;
+    }
+  }
+
+  checkRegexCount(): void {
+    if (this.regexCount > 64) {
+      this.diagnostics.push({
+        severity: 'warning',
+        message: `Expression uses ${this.regexCount} regex patterns, exceeding the limit of 64 per rule`,
+        code: 'too-many-regex',
+      });
+    }
+  }
+
+  // ── In-Expression Type Checking ────────────────────────────────────
+
+  private validateInExpressionTypes(node: ASTNode): void {
+    if (node.kind !== 'InExpression') return;
+
+    const fieldType = this.resolveFieldType(node.field);
+    if (!fieldType) return;
+
+    // `in` supports String, Integer, and IP — not Boolean or Float
+    const supportedInTypes: FieldType[] = ['String', 'Integer', 'IP'];
+    if (!supportedInTypes.includes(fieldType)) {
+      this.diagnostics.push({
+        severity: 'error',
+        message: `Operator "in" does not support ${fieldType} fields. Supported types: ${supportedInTypes.join(', ')}`,
+        code: 'operator-type-mismatch',
+        position: node.position,
+      });
+    }
+  }
+
+  // ── Empty In-List ──────────────────────────────────────────────────
+
+  private validateEmptyInList(node: ASTNode): void {
+    if (node.kind !== 'InExpression') return;
+    if (node.values.length === 0) {
+      this.diagnostics.push({
+        severity: 'warning',
+        message: 'Empty in-list "{}" — this expression will never match',
+        code: 'empty-in-list',
+        position: node.position,
+      });
     }
   }
 

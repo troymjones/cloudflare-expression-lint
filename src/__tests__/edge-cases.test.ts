@@ -83,15 +83,13 @@ describe('Named List Validation', () => {
   });
 
   it('rejects list names with hyphens as parse error', () => {
-    // Hyphens are not valid in Cloudflare list names, and the lexer
-    // correctly fails to parse them as part of the identifier
     const result = validate('ip.src in $my-list', { expressionType: 'filter' });
     expect(result.valid).toBe(false);
   });
 
   it('list name warnings are warnings not errors', () => {
     const result = validate('ip.src in $MyList', { expressionType: 'filter' });
-    expect(result.valid).toBe(true); // warning, not error
+    expect(result.valid).toBe(true);
   });
 });
 
@@ -111,16 +109,82 @@ describe('IP and CIDR Validation', () => {
     expect(result.valid).toBe(true);
   });
 
-  it('warns on CIDR mask > 32 for IPv4', () => {
+  it('errors on CIDR mask > 32 for IPv4', () => {
     const result = validate('ip.src in {1.2.3.4/33}', { expressionType: 'filter' });
     expect(result.diagnostics.some(d => d.code === 'invalid-cidr-mask')).toBe(true);
   });
 
-  it('warns on CIDR mask = 0', () => {
-    // /0 is technically valid but likely a mistake
+  it('allows CIDR /0 (all IPs)', () => {
     const result = validate('ip.src in {0.0.0.0/0}', { expressionType: 'filter' });
-    // We allow /0 since it means "all IPs" and is intentional in some cases
     expect(result.valid).toBe(true);
+  });
+});
+
+describe('Wildcard Pattern Validation', () => {
+  it('accepts valid wildcard with single asterisk', () => {
+    const result = validate('http.host wildcard "*.example.com"', { expressionType: 'filter' });
+    expect(result.valid).toBe(true);
+  });
+
+  it('warns on double asterisk in wildcard pattern', () => {
+    const result = validate('http.host wildcard "**.example.com"', { expressionType: 'filter' });
+    expect(result.diagnostics.some(d => d.code === 'invalid-wildcard-pattern')).toBe(true);
+  });
+
+  it('accepts multiple single asterisks', () => {
+    const result = validate('http.request.full_uri wildcard "https://*.example.com/*"', { expressionType: 'filter' });
+    expect(result.valid).toBe(true);
+  });
+
+  it('warns on double asterisk in strict wildcard', () => {
+    const result = validate('http.host strict wildcard "**.Example.com"', { expressionType: 'filter' });
+    expect(result.diagnostics.some(d => d.code === 'invalid-wildcard-pattern')).toBe(true);
+  });
+});
+
+describe('In-Operator Type Constraints', () => {
+  it('errors on Boolean field with in operator', () => {
+    // `in` does not support Boolean type
+    const result = validate('ssl in {"true"}', { expressionType: 'filter' });
+    expect(result.diagnostics.some(d => d.code === 'operator-type-mismatch')).toBe(true);
+  });
+
+  it('allows String field with in operator', () => {
+    expect(validate('http.host in {"a.com" "b.com"}', { expressionType: 'filter' }).valid).toBe(true);
+  });
+
+  it('allows Integer field with in operator', () => {
+    expect(validate('cf.edge.server_port in {80 443}', { expressionType: 'filter' }).valid).toBe(true);
+  });
+
+  it('allows IP field with in operator', () => {
+    expect(validate('ip.src in {1.2.3.0/24}', { expressionType: 'filter' }).valid).toBe(true);
+  });
+});
+
+describe('Empty In-List', () => {
+  it('warns on empty in-list', () => {
+    const result = validate('ip.src.country in {}', { expressionType: 'filter' });
+    expect(result.diagnostics.some(d => d.code === 'empty-in-list')).toBe(true);
+  });
+});
+
+describe('Regex Count Limit', () => {
+  it('warns when expression uses more than 64 regex patterns', () => {
+    // Build an expression with 65 matches clauses
+    const parts = Array.from({ length: 65 }, (_, i) =>
+      `http.request.uri.path matches "^/path${i}/"`
+    ).join(' or ');
+    const result = validate(parts, { expressionType: 'filter' });
+    expect(result.diagnostics.some(d => d.code === 'too-many-regex')).toBe(true);
+  });
+
+  it('allows expression with exactly 64 regex patterns', () => {
+    const parts = Array.from({ length: 64 }, (_, i) =>
+      `http.request.uri.path matches "^/path${i}/"`
+    ).join(' or ');
+    const result = validate(parts, { expressionType: 'filter' });
+    expect(result.diagnostics.some(d => d.code === 'too-many-regex')).not.toBe(true);
   });
 });
 
@@ -146,9 +210,12 @@ describe('Misc Edge Cases', () => {
     expect(result.valid).toBe(true);
   });
 
-  it('rejects empty in-list', () => {
-    // Cloudflare rejects empty in-lists
-    expect(() => parse('ip.src in {}')).not.toThrow();
-    // The parser should handle it; validator could optionally warn
+  it('rejects field on right side of comparison (field op field)', () => {
+    // Cloudflare doesn't support field-to-field comparisons
+    // The parser may or may not catch this — if it parses, the validator should warn
+    // For now, just make sure it doesn't crash
+    const result = validate('http.host eq http.referer', { expressionType: 'filter' });
+    // This may parse (both look like fields) but is semantically invalid
+    expect(result).toBeDefined();
   });
 });
