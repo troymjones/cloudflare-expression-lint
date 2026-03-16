@@ -270,11 +270,12 @@ export const FIELDS: FieldDef[] = [
   { name: 'cf.worker.upstream_zone', type: 'Boolean' },
 
   // ── Load Balancing Fields ────────────────────────────────────────────
-  { name: 'cf.load_balancer.name', type: 'Bytes', phases: ['load_balancing'] },
-  { name: 'cf.load_balancer.region', type: 'Bytes', phases: ['load_balancing'] },
+  // Docs say Bytes but expressions use string comparison operators on these
+  { name: 'cf.load_balancer.name', type: 'String', phases: ['load_balancing'] },
+  { name: 'cf.load_balancer.region', type: 'String', phases: ['load_balancing'] },
 
   // ── DNS Fields (unproxied load balancing) ──────────────────────────
-  { name: 'dns.qry.name', type: 'Bytes', phases: ['load_balancing'] },
+  { name: 'dns.qry.name', type: 'String', phases: ['load_balancing'] },
   { name: 'dns.qry.name.len', type: 'Integer', phases: ['load_balancing'] },
   { name: 'dns.qry.qu', type: 'Boolean', phases: ['load_balancing'] },
   { name: 'dns.qry.type', type: 'Integer', phases: ['load_balancing'] },
