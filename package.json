@@ -29,7 +29,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "sync-docs": "tsx scripts/sync-cloudflare-docs.ts",
+    "sync-docs:apply": "tsx scripts/sync-cloudflare-docs.ts --apply"
   },
   "keywords": [
     "cloudflare",
@@ -55,12 +57,13 @@
   "homepage": "https://github.com/troymjones/cloudflare-expression-lint#readme",
   "devDependencies": {
     "@types/node": "^20.11.0",
+    "tsx": "^4.21.0",
     "typescript": "^5.3.3",
     "vitest": "^1.2.0"
   },
   "dependencies": {
-    "yaml": "^2.3.4",
-    "glob": "^10.3.10"
+    "glob": "^10.3.10",
+    "yaml": "^2.3.4"
   },
   "peerDependencies": {
     "eslint": ">=8.0.0",
