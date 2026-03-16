@@ -125,6 +125,9 @@ const DEFAULT_PHASE_MAPPINGS: PhaseMapping = {
   'http_request_snippets': 'http_request_snippets',
   'http_request_redirect': 'http_request_redirect',
 
+  // Load balancing
+  'load_balancing': 'load_balancing',
+
   // Common shorthand keys used in YAML configs
   'cache_rules': 'http_request_cache_settings',
   'rate_limit_rules': 'http_ratelimit',
