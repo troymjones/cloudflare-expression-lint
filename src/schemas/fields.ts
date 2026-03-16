@@ -269,6 +269,18 @@ export const FIELDS: FieldDef[] = [
   // ── Worker Fields ────────────────────────────────────────────────────
   { name: 'cf.worker.upstream_zone', type: 'Boolean' },
 
+  // ── Load Balancing Fields ────────────────────────────────────────────
+  { name: 'cf.load_balancer.name', type: 'Bytes', phases: ['load_balancing'] },
+  { name: 'cf.load_balancer.region', type: 'Bytes', phases: ['load_balancing'] },
+
+  // ── DNS Fields (unproxied load balancing) ──────────────────────────
+  { name: 'dns.qry.name', type: 'Bytes', phases: ['load_balancing'] },
+  { name: 'dns.qry.name.len', type: 'Integer', phases: ['load_balancing'] },
+  { name: 'dns.qry.qu', type: 'Boolean', phases: ['load_balancing'] },
+  { name: 'dns.qry.type', type: 'Integer', phases: ['load_balancing'] },
+  { name: 'dns.rr.opt.client', type: 'Boolean', phases: ['load_balancing'] },
+  { name: 'dns.rr.opt.client.addr', type: 'String', phases: ['load_balancing'] },
+
   // ── Raw (untransformed) Fields ───────────────────────────────────────
   { name: 'raw.http.request.full_uri', type: 'String' },
   { name: 'raw.http.request.uri', type: 'String' },
