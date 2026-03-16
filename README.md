@@ -195,6 +195,7 @@ This tool supports the full Cloudflare Rules Language syntax:
 ### Value Types
 
 - **Strings**: `"value"` with `\"` and `\\` escaping
+- **Raw Strings**: `r"value"`, `r#"value"#` — no escape processing, useful for regex
 - **Integers**: `42`, `0`, `396507`
 - **Booleans**: `true`, `false`
 - **IP Addresses**: `1.2.3.4`, with CIDR (`1.2.3.0/24`) in `in` lists
@@ -233,7 +234,6 @@ All standard Cloudflare functions are supported, with context-aware validation:
 | `invalid-list-name` | warning | Named list name doesn't match Cloudflare naming rules |
 | `invalid-cidr-mask` | error | CIDR mask out of valid range |
 | `invalid-wildcard-pattern` | warning | Wildcard contains `**` (prohibited) |
-| `invalid-list-name` | warning | Named list name doesn't follow Cloudflare naming rules |
 | `empty-in-list` | warning | Empty `in {}` list will never match |
 | `too-many-regex` | warning | More than 64 regex patterns per expression |
 | `prefer-bare-boolean` | info | Prefer `ssl` over `ssl == true` |
@@ -353,6 +353,18 @@ The field and function registries are defined in TypeScript files under `src/sch
 
 To add a new field or function, edit the relevant schema file and add a new entry to the array. The tool will automatically pick it up.
 
+## Publishing
+
+Publish to npm automatically by bumping the version:
+
+```bash
+npm version patch    # or minor / major
+git push && git push --tags
+```
+
+Pushing a `v*` tag triggers the GitHub Actions workflow which builds,
+tests, and publishes to npm via OIDC Trusted Publishing (no tokens needed).
+
 ## Architecture
 
 ```
@@ -360,14 +372,15 @@ src/
 ├── lexer.ts          # Tokenizer: string → Token[]
 ├── parser.ts         # Parser: Token[] → AST (recursive descent)
 ├── validator.ts      # Validator: AST → Diagnostic[] (semantic analysis)
-├── yaml-scanner.ts   # YAML file scanner with phase inference
-├── cli.ts            # CLI entry point
+├── yaml-scanner.ts   # YAML file scanner with configurable phase inference
+├── eslint-plugin.ts  # ESLint plugin adapter (optional)
+├── cli.ts            # CLI entry point with config file support
 ├── types.ts          # Shared type definitions
 ├── index.ts          # Public API exports
 └── schemas/
-    ├── fields.ts     # 211+ field definitions
-    ├── functions.ts  # 25+ function definitions
-    └── operators.ts  # Operator definitions
+    ├── fields.ts     # 211+ field definitions with deprecation tracking
+    ├── functions.ts  # 25+ function definitions with context restrictions
+    └── operators.ts  # Operator definitions with type constraints
 ```
 
 ## License
