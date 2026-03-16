@@ -129,6 +129,17 @@ export function tokenize(input: string): Token[] {
     return dotCount === 3 && hasDigit;
   }
 
+  /** Check if upcoming characters look like an IPv6 address */
+  function looksLikeIPv6(): boolean {
+    let tempPos = pos;
+    let hasColon = false;
+    while (tempPos < input.length && /[0-9a-fA-F:]/.test(input[tempPos])) {
+      if (input[tempPos] === ':') hasColon = true;
+      tempPos++;
+    }
+    return hasColon;
+  }
+
   function addToken(type: TokenType, value: string, startPos: number, startLine: number, startCol: number): void {
     tokens.push({ type, value, position: startPos, line: startLine, column: startCol });
   }
@@ -325,10 +336,10 @@ export function tokenize(input: string): Token[] {
       }
       const inBraces = lastOpenBrace >= 0 && lastOpenBrace > lastCloseBrace;
 
-      if (inBraces && looksLikeIP()) {
-        // Read full IP address
+      if (inBraces && (looksLikeIP() || looksLikeIPv6())) {
+        // Read full IP address (IPv4 or IPv6)
         let ip = '';
-        while (pos < input.length && /[0-9.:]/.test(input[pos])) {
+        while (pos < input.length && /[0-9a-fA-F.:]/.test(input[pos])) {
           ip += advance();
         }
         addToken(TokenType.IPAddress, ip, startPos, startLine, startCol);

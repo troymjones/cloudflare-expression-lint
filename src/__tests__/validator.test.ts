@@ -205,9 +205,9 @@ describe('Validator', () => {
       expect(isValid('starts_with(http.request.uri.path, "/admin/")')).toBe(true);
     });
 
-    it('errors when using to_string in filter context', () => {
-      const diagnostics = diags('to_string(cf.bot_management.score) eq "30"');
-      expect(diagnostics.some(d => d.code === 'function-not-in-context')).toBe(true);
+    it('allows to_string in filter context', () => {
+      // to_string is available in all contexts
+      expect(isValid('to_string(cf.bot_management.score) eq "30"')).toBe(true);
     });
 
     it('allows to_string in rewrite_header context', () => {

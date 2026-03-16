@@ -191,7 +191,7 @@ export const FUNCTIONS: FunctionDef[] = [
     name: 'to_string',
     params: [{ name: 'value', type: 'Any' }],
     returnType: 'String',
-    contexts: ['rewrite_url', 'rewrite_header', 'redirect_target'],
+    contexts: ['all'],
   },
   {
     name: 'encode_base64',
@@ -270,6 +270,19 @@ export const FUNCTIONS: FunctionDef[] = [
     ],
     returnType: 'IP',
     contexts: ['filter'],
+  },
+
+  // ── Hash Functions ────────────────────────────────────────────────────
+  {
+    name: 'hash_in_range',
+    params: [
+      { name: 'min', type: 'Integer' },
+      { name: 'max', type: 'Integer' },
+      { name: 'seed', type: 'Bytes' },
+    ],
+    returnType: 'Integer',
+    contexts: ['filter'],
+    notes: 'Returns a hash value derived from seed within [min, max] range. Used for traffic sampling.',
   },
 
   // ── HMAC Validation ──────────────────────────────────────────────────

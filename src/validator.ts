@@ -39,11 +39,32 @@ export function validate(expression: string, context: ValidationContext): LintRe
     });
   }
 
+  // Check for template placeholders — expressions containing unresolved
+  // template variables (e.g., UPPER_CASE_VAR, ${var}, {PLACEHOLDER})
+  // cannot be validated since they're not complete expressions yet.
+  if (context.allowPlaceholders !== false && containsTemplatePlaceholders(expression)) {
+    diagnostics.push({
+      severity: 'info',
+      message: 'Expression contains template placeholders and cannot be fully validated',
+      code: 'contains-placeholders',
+    });
+    // Still try to parse — some expressions are partially valid
+  }
+
   // Try to parse
   let ast: ASTNode | undefined;
   try {
     ast = parse(expression);
   } catch (err) {
+    // If the expression has template placeholders, demote parse errors to warnings
+    if (containsTemplatePlaceholders(expression)) {
+      diagnostics.push({
+        severity: 'warning',
+        message: `Parse error (may be caused by template placeholders): ${err instanceof Error ? err.message : String(err)}`,
+        code: 'parse-error-placeholder',
+      });
+      return { expression, valid: true, diagnostics };
+    }
     diagnostics.push({
       severity: 'error',
       message: err instanceof Error ? err.message : String(err),
@@ -474,4 +495,42 @@ class ASTWalker {
       case 'redirect_target': return 'redirect_target';
     }
   }
+}
+
+/**
+ * Detect if an expression contains template placeholders that will be
+ * substituted before deployment (e.g., by Terraform templatefile()).
+ *
+ * Common patterns:
+ *   - UPPER_CASE_IDENTIFIERS inside expressions (not quoted)
+ *   - ${variable} Terraform interpolation
+ *   - {REPLACE_*} custom placeholders
+ */
+function containsTemplatePlaceholders(expression: string): boolean {
+  // Match unquoted UPPER_CASE identifiers that look like template vars
+  // We need to check outside of quoted strings
+  let inQuote = false;
+  let escaped = false;
+  for (let i = 0; i < expression.length; i++) {
+    const ch = expression[i];
+    if (escaped) { escaped = false; continue; }
+    if (ch === '\\') { escaped = true; continue; }
+    if (ch === '"') { inQuote = !inQuote; continue; }
+    if (inQuote) continue;
+
+    // Check for ${...} interpolation
+    if (ch === '$' && expression[i + 1] === '{') return true;
+
+    // Check for UPPER_CASE_IDENTIFIER (at least 2 uppercase + underscore, like ROUTER_API_KEYS)
+    if (/[A-Z]/.test(ch)) {
+      let j = i;
+      while (j < expression.length && /[A-Z0-9_]/.test(expression[j])) j++;
+      const word = expression.slice(i, j);
+      // Must be at least 4 chars, contain an underscore, and be all-caps
+      if (word.length >= 4 && word.includes('_') && /^[A-Z][A-Z0-9_]+$/.test(word)) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
