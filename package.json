@@ -1,0 +1,49 @@
+{
+  "name": "cloudflare-expression-lint",
+  "version": "0.1.0",
+  "description": "A parser, validator, and linter for Cloudflare Rules Language expressions with phase-aware field and function checking",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "cf-expr-lint": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "tsc --noEmit"
+  },
+  "keywords": [
+    "cloudflare",
+    "expression",
+    "lint",
+    "validator",
+    "parser",
+    "firewall",
+    "waf",
+    "terraform",
+    "wirefilter",
+    "rules-language"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.3.3",
+    "vitest": "^1.2.0"
+  },
+  "dependencies": {
+    "yaml": "^2.3.4",
+    "glob": "^10.3.10"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
