@@ -40,6 +40,7 @@ interface CLIOptions {
   phaseMaps: { yamlKey: string; phase: string }[];
   format: 'text' | 'json';
   quiet: boolean;
+  warnExitCode: number;
   help: boolean;
 }
 
@@ -52,6 +53,7 @@ function parseArgs(argv: string[]): CLIOptions {
     phaseMaps: [],
     format: 'text',
     quiet: false,
+    warnExitCode: 0,
     help: false,
   };
 
@@ -114,6 +116,9 @@ function parseArgs(argv: string[]): CLIOptions {
       case '--quiet':
       case '-q':
         opts.quiet = true;
+        break;
+      case '--warn-exit-code':
+        opts.warnExitCode = parseInt(argv[++i], 10);
         break;
       default:
         if (!arg.startsWith('-')) {
@@ -220,6 +225,8 @@ Options:
                              Can be specified multiple times.
   --format, -f <fmt>         Output format: text (default), json
   --quiet, -q                Only show errors (suppress warnings/info)
+  --warn-exit-code <n>       Exit code when warnings found but no errors
+                             (default: 0). Use 2 for CI warning status.
   --help, -h                 Show this help
 
 Config File:
@@ -280,6 +287,7 @@ async function main(): Promise<void> {
   }
 
   let hasErrors = false;
+  let hasWarnings = false;
   const jsonResults: unknown[] = [];
 
   // ── Single expression mode ────────────────────────────────────────
@@ -315,9 +323,10 @@ async function main(): Promise<void> {
       }
 
       if (!result.valid) hasErrors = true;
+      if (result.diagnostics.some(d => d.severity === 'warning')) hasWarnings = true;
     }
 
-    process.exit(hasErrors ? 1 : 0);
+    process.exit(hasErrors ? 1 : hasWarnings ? opts.warnExitCode : 0);
   }
 
   // ── File scanning mode ────────────────────────────────────────────
@@ -388,6 +397,7 @@ async function main(): Promise<void> {
       }
 
       if (!expr.result.valid) hasErrors = true;
+      if (warnings > 0) hasWarnings = true;
     }
   }
 
@@ -402,7 +412,7 @@ async function main(): Promise<void> {
     }
   }
 
-  process.exit(hasErrors ? 1 : 0);
+  process.exit(hasErrors ? 1 : hasWarnings ? opts.warnExitCode : 0);
 }
 
 main().catch(err => {
