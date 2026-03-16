@@ -119,12 +119,20 @@ class ASTWalker {
         this.walk(node.field);
         break;
 
+      case 'NamedList':
+        this.validateNamedList(node.name, node.position);
+        break;
+
       case 'BooleanLiteral':
       case 'StringLiteral':
       case 'IntegerLiteral':
       case 'FloatLiteral':
+        break;
+
       case 'IPLiteral':
-      case 'NamedList':
+        if (node.cidr !== undefined) {
+          this.validateCIDRMask(node.value, node.cidr, node.position);
+        }
         break;
     }
   }
@@ -301,6 +309,43 @@ class ASTWalker {
 
       default:
         return undefined;
+    }
+  }
+
+  // ── Named List Validation ───────────────────────────────────────────
+
+  private validateNamedList(name: string, position?: number): void {
+    // Strip the leading $
+    const listName = name.startsWith('$') ? name.slice(1) : name;
+
+    // Managed lists use cf.* prefix — these are always valid
+    if (listName.startsWith('cf.')) return;
+
+    // Custom list names must be lowercase, numbers, and underscores only
+    if (!/^[a-z0-9_]+$/.test(listName)) {
+      this.diagnostics.push({
+        severity: 'warning',
+        message: `Named list "${name}" may be invalid. Custom list names must use only lowercase letters, numbers, and underscores (a-z, 0-9, _)`,
+        code: 'invalid-list-name',
+        position,
+      });
+    }
+  }
+
+  // ── CIDR Mask Validation ───────────────────────────────────────────
+
+  private validateCIDRMask(ip: string, mask: number, position?: number): void {
+    // Determine if IPv4 or IPv6
+    const isIPv6 = ip.includes(':');
+    const maxMask = isIPv6 ? 128 : 32;
+
+    if (mask < 0 || mask > maxMask) {
+      this.diagnostics.push({
+        severity: 'error',
+        message: `Invalid CIDR mask /${mask} for ${isIPv6 ? 'IPv6' : 'IPv4'} address. Must be 0-${maxMask}`,
+        code: 'invalid-cidr-mask',
+        position,
+      });
     }
   }
 

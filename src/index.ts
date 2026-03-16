@@ -30,3 +30,30 @@ export {
   findComparisonOperator, findLogicalOperator,
 } from './schemas/operators.js';
 export type { OperatorDef, FieldType } from './schemas/operators.js';
+
+// Re-export YAML scanner
+export {
+  scanYaml,
+  getDefaultExpressionKeys,
+  getDefaultPhaseMappings,
+} from './yaml-scanner.js';
+export type {
+  YAMLExpressionLocation,
+  YAMLScanResult,
+  ExpressionKeyMapping,
+  PhaseMapping,
+  ScannerOptions,
+} from './yaml-scanner.js';
+
+// ESLint plugin adapter
+export { default as eslintPlugin } from './eslint-plugin.js';
+export {
+  plugin as cloudflareExpressionLintPlugin,
+  validateExpressionRule,
+  createValidateExpressionRule,
+  isExpressionKey,
+  inferExpressionType,
+  inferPhaseFromKey,
+  DEFAULT_EXPRESSION_KEYS,
+} from './eslint-plugin.js';
+export type { ValidateExpressionRuleOptions } from './eslint-plugin.js';

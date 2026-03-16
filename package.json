@@ -12,6 +12,10 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./eslint-plugin": {
+      "import": "./dist/eslint-plugin.js",
+      "types": "./dist/eslint-plugin.d.ts"
     }
   },
   "scripts": {
@@ -42,6 +46,18 @@
   "dependencies": {
     "yaml": "^2.3.4",
     "glob": "^10.3.10"
+  },
+  "peerDependencies": {
+    "eslint": ">=8.0.0",
+    "yaml-eslint-parser": ">=1.0.0"
+  },
+  "peerDependenciesMeta": {
+    "eslint": {
+      "optional": true
+    },
+    "yaml-eslint-parser": {
+      "optional": true
+    }
   },
   "engines": {
     "node": ">=18.0.0"
