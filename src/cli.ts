@@ -6,24 +6,27 @@
  * Usage:
  *   cf-expr-lint [options] <files...>
  *   cf-expr-lint --expression "http.host eq \"test.com\""
- *   cf-expr-lint config/**\/*.yaml
- *   echo 'http.host eq "test"' | cf-expr-lint --stdin
+ *   cf-expr-lint --config .cf-expr-lint.json config/**\/*.yaml
  *
  * Options:
  *   --expression, -e   Validate a single expression string
  *   --stdin             Read expression from stdin
- *   --type, -t          Expression type: filter (default), rewrite_url, rewrite_header, redirect_target
+ *   --type, -t          Expression type: filter, rewrite_url, rewrite_header, redirect_target
  *   --phase, -p         Cloudflare phase (e.g., http_request_firewall_custom)
+ *   --config, -c        Path to config file (.json) with custom mappings
+ *   --expr-key          Add expression key mapping: key:type[:phase]
+ *   --phase-map         Add phase mapping: yaml_key:phase_name
  *   --format, -f        Output format: text (default), json
  *   --quiet, -q         Only output errors (suppress warnings)
  *   --help, -h          Show this help message
  */
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { glob } from 'glob';
 import { validate } from './validator.js';
 import { scanYaml } from './yaml-scanner.js';
+import type { ScannerOptions, ExpressionKeyMapping } from './yaml-scanner.js';
 import type { ValidationContext, ExpressionType, Diagnostic } from './types.js';
 
 interface CLIOptions {
@@ -32,6 +35,9 @@ interface CLIOptions {
   stdin: boolean;
   type: ExpressionType;
   phase?: string;
+  configFile?: string;
+  exprKeys: { key: string; type: ExpressionType; phase?: string }[];
+  phaseMaps: { yamlKey: string; phase: string }[];
   format: 'text' | 'json';
   quiet: boolean;
   help: boolean;
@@ -42,6 +48,8 @@ function parseArgs(argv: string[]): CLIOptions {
     files: [],
     stdin: false,
     type: 'filter',
+    exprKeys: [],
+    phaseMaps: [],
     format: 'text',
     quiet: false,
     help: false,
@@ -70,6 +78,35 @@ function parseArgs(argv: string[]): CLIOptions {
       case '-p':
         opts.phase = argv[++i];
         break;
+      case '--config':
+      case '-c':
+        opts.configFile = argv[++i];
+        break;
+      case '--expr-key': {
+        // Format: key:type[:phase]
+        const val = argv[++i];
+        const parts = val.split(':');
+        if (parts.length >= 2) {
+          opts.exprKeys.push({
+            key: parts[0],
+            type: parts[1] as ExpressionType,
+            phase: parts[2],
+          });
+        }
+        break;
+      }
+      case '--phase-map': {
+        // Format: yaml_key:phase_name
+        const val = argv[++i];
+        const colonIdx = val.indexOf(':');
+        if (colonIdx > 0) {
+          opts.phaseMaps.push({
+            yamlKey: val.substring(0, colonIdx),
+            phase: val.substring(colonIdx + 1),
+          });
+        }
+        break;
+      }
       case '--format':
       case '-f':
         opts.format = argv[++i] as 'text' | 'json';
@@ -90,6 +127,75 @@ function parseArgs(argv: string[]): CLIOptions {
   return opts;
 }
 
+/**
+ * Build ScannerOptions from CLI flags and config file.
+ */
+function buildScannerOptions(opts: CLIOptions): ScannerOptions | undefined {
+  const scannerOpts: ScannerOptions = {};
+  let hasOptions = false;
+
+  // Load config file if specified (or auto-detect)
+  const configPath = opts.configFile ?? findConfigFile();
+  if (configPath) {
+    try {
+      const raw = readFileSync(resolve(configPath), 'utf-8');
+      const config = JSON.parse(raw) as {
+        expressionKeys?: Record<string, ExpressionKeyMapping>;
+        phaseMappings?: Record<string, string>;
+      };
+      if (config.expressionKeys) {
+        scannerOpts.expressionKeys = config.expressionKeys;
+        hasOptions = true;
+      }
+      if (config.phaseMappings) {
+        scannerOpts.phaseMappings = config.phaseMappings;
+        hasOptions = true;
+      }
+    } catch (err) {
+      console.error(`Error reading config file ${configPath}: ${err instanceof Error ? err.message : err}`);
+      process.exit(1);
+    }
+  }
+
+  // Apply --expr-key flags (merge with config file)
+  if (opts.exprKeys.length > 0) {
+    scannerOpts.expressionKeys = scannerOpts.expressionKeys ?? {};
+    for (const ek of opts.exprKeys) {
+      scannerOpts.expressionKeys[ek.key] = {
+        type: ek.type,
+        phaseHint: ek.phase,
+      };
+    }
+    hasOptions = true;
+  }
+
+  // Apply --phase-map flags (merge with config file)
+  if (opts.phaseMaps.length > 0) {
+    scannerOpts.phaseMappings = scannerOpts.phaseMappings ?? {};
+    for (const pm of opts.phaseMaps) {
+      scannerOpts.phaseMappings[pm.yamlKey] = pm.phase;
+    }
+    hasOptions = true;
+  }
+
+  return hasOptions ? scannerOpts : undefined;
+}
+
+/**
+ * Auto-detect config file in the current directory.
+ */
+function findConfigFile(): string | undefined {
+  const candidates = [
+    '.cf-expr-lint.json',
+    '.cf-expr-lint.yaml',
+    'cf-expr-lint.config.json',
+  ];
+  for (const name of candidates) {
+    if (existsSync(name)) return name;
+  }
+  return undefined;
+}
+
 function printHelp(): void {
   console.log(`
 cloudflare-expression-lint - Validate Cloudflare Rules Language expressions
@@ -100,33 +206,69 @@ Usage:
   echo 'http.host eq "test"' | cf-expr-lint --stdin
 
 Options:
-  --expression, -e <expr>  Validate a single expression string
-  --stdin                  Read expression from stdin
-  --type, -t <type>        Expression type: filter (default), rewrite_url,
-                           rewrite_header, redirect_target
-  --phase, -p <phase>      Cloudflare phase for field validation
-  --format, -f <fmt>       Output format: text (default), json
-  --quiet, -q              Only show errors (suppress warnings/info)
-  --help, -h               Show this help
+  --expression, -e <expr>    Validate a single expression string
+  --stdin                    Read expression from stdin
+  --type, -t <type>          Expression type: filter (default), rewrite_url,
+                             rewrite_header, redirect_target
+  --phase, -p <phase>        Cloudflare phase for field validation
+  --config, -c <file>        Config file with custom mappings (JSON)
+  --expr-key <key:type[:phase]>
+                             Add a YAML key that contains an expression.
+                             Can be specified multiple times.
+  --phase-map <yaml_key:phase>
+                             Map a YAML parent key to a Cloudflare phase.
+                             Can be specified multiple times.
+  --format, -f <fmt>         Output format: text (default), json
+  --quiet, -q                Only show errors (suppress warnings/info)
+  --help, -h                 Show this help
 
-Files:
-  Accepts YAML files (.yaml, .yml). Glob patterns are expanded.
-  Expressions are auto-detected from YAML keys like "expression",
-  "rewrite_expression", "source_url_expression", etc.
+Config File:
+  Place a .cf-expr-lint.json in your project root (auto-detected), or
+  specify with --config. Example:
+
+  {
+    "expressionKeys": {
+      "rewrite_expression": { "type": "rewrite_url", "phaseHint": "http_request_transform" },
+      "source_url_expression": { "type": "filter", "phaseHint": "http_request_dynamic_redirect" },
+      "redirect_target": { "type": "redirect_target" }
+    },
+    "phaseMappings": {
+      "waf_rules": "http_request_firewall_custom",
+      "transform_rules": "http_request_late_transform",
+      "url_rewrite_rules": "http_request_transform"
+    }
+  }
+
+  Custom mappings are merged with built-in defaults. The built-in
+  expression key is "expression" (the Terraform provider attribute).
+  Built-in phase mappings include Cloudflare phase names and common
+  shorthands like "cache_rules" and "single_redirects".
 
 Examples:
+  # Scan with defaults (detects "expression" keys, infers phase from context)
   cf-expr-lint config/**/*.yaml
+
+  # Scan with custom expression keys and phase mappings
+  cf-expr-lint \\
+    --expr-key rewrite_expression:rewrite_url:http_request_transform \\
+    --expr-key source_url_expression:filter:http_request_dynamic_redirect \\
+    --phase-map waf_rules:http_request_firewall_custom \\
+    config/**/*.yaml
+
+  # Scan with config file
+  cf-expr-lint --config .cf-expr-lint.json config/**/*.yaml
+
+  # Validate a single expression
   cf-expr-lint -e '(http.host eq "test.com")'
   cf-expr-lint -e 'regex_replace(http.request.uri.path, "^/old/", "/")' -t rewrite_url
-  cf-expr-lint -p http_request_firewall_custom config/waf/*.yaml
+  cf-expr-lint -e 'http.response.code eq 200' -p http_request_firewall_custom
 `);
 }
 
-function formatDiagnostic(d: Diagnostic, file?: string, yamlPath?: string): string {
-  const location = [file, yamlPath].filter(Boolean).join(' → ');
+function formatDiagnostic(d: Diagnostic): string {
   const prefix = d.severity === 'error' ? '✗' : d.severity === 'warning' ? '⚠' : 'ℹ';
   const pos = d.position !== undefined ? ` (pos ${d.position})` : '';
-  return `  ${prefix} [${d.code}]${pos}: ${d.message}${location ? `\n    in ${location}` : ''}`;
+  return `  ${prefix} [${d.code}]${pos}: ${d.message}`;
 }
 
 async function main(): Promise<void> {
@@ -184,6 +326,8 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  const scannerOpts = buildScannerOptions(opts);
+
   // Expand globs
   const expandedFiles: string[] = [];
   for (const pattern of opts.files) {
@@ -211,7 +355,7 @@ async function main(): Promise<void> {
       continue;
     }
 
-    const scanResult = scanYaml(content, file);
+    const scanResult = scanYaml(content, file, scannerOpts);
 
     if (scanResult.parseError) {
       console.error(`Error parsing ${file}: ${scanResult.parseError}`);

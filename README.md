@@ -60,6 +60,53 @@ cf-expr-lint -e 'http.response.code eq 200' -p http_request_firewall_custom
 echo '(ip.src.country in {"US" "JP"})' | cf-expr-lint --stdin
 ```
 
+### Custom YAML key mappings (CLI)
+
+By default, the scanner only looks for the `expression` key (the standard
+Cloudflare Terraform provider attribute). If your YAML uses other key
+names for expressions, tell the scanner about them:
+
+```bash
+# Add custom expression keys and phase mappings via flags
+cf-expr-lint \
+  --expr-key rewrite_expression:rewrite_url:http_request_transform \
+  --expr-key source_url_expression:filter:http_request_dynamic_redirect \
+  --phase-map waf_rules:http_request_firewall_custom \
+  --phase-map transform_rules:http_request_late_transform \
+  config/**/*.yaml
+```
+
+The `--expr-key` format is `key_name:expression_type[:phase]`.
+The `--phase-map` format is `yaml_parent_key:cloudflare_phase`.
+
+Both merge with the built-in defaults — your custom mappings extend them,
+they don't replace them.
+
+### Config file
+
+For projects with many custom mappings, use a `.cf-expr-lint.json` config
+file in your project root (auto-detected) or specified with `--config`:
+
+```json
+{
+  "expressionKeys": {
+    "rewrite_expression": { "type": "rewrite_url", "phaseHint": "http_request_transform" },
+    "source_url_expression": { "type": "filter", "phaseHint": "http_request_dynamic_redirect" },
+    "target_url_expression": { "type": "redirect_target", "phaseHint": "http_request_dynamic_redirect" }
+  },
+  "phaseMappings": {
+    "waf_rules": "http_request_firewall_custom",
+    "custom_rules": "http_request_firewall_custom",
+    "configuration_rules": "http_config_settings",
+    "transform_request_header_rules": "http_request_late_transform",
+    "transform_response_header_rules": "http_response_headers_transform",
+    "transform_url_rewrite_rules": "http_request_transform"
+  }
+}
+```
+
+Then just run: `cf-expr-lint config/**/*.yaml`
+
 ### CLI Options
 
 | Option | Short | Description |
@@ -68,6 +115,9 @@ echo '(ip.src.country in {"US" "JP"})' | cf-expr-lint --stdin
 | `--stdin` | | Read expression from stdin |
 | `--type` | `-t` | Expression type: `filter` (default), `rewrite_url`, `rewrite_header`, `redirect_target` |
 | `--phase` | `-p` | Cloudflare phase for field validation |
+| `--config` | `-c` | Path to config file (JSON) with custom mappings |
+| `--expr-key` | | Add expression key mapping: `key:type[:phase]` (repeatable) |
+| `--phase-map` | | Add phase mapping: `yaml_key:phase` (repeatable) |
 | `--format` | `-f` | Output format: `text` (default), `json` |
 | `--quiet` | `-q` | Only show errors (suppress warnings) |
 | `--help` | `-h` | Show help |
@@ -184,37 +234,42 @@ All standard Cloudflare functions are supported, with context-aware validation:
 | `invalid-cidr-mask` | error | CIDR mask out of valid range |
 | `prefer-bare-boolean` | info | Prefer `ssl` over `ssl == true` |
 
-## YAML Scanner
+## How Mappings Work
 
-The YAML scanner detects `expression` keys (the standard Cloudflare Terraform provider attribute name) by default. Phase is inferred from YAML parent keys that match Cloudflare phase names (e.g., `http_request_firewall_custom`, `cache_rules`).
+The scanner needs to know two things about each YAML file:
 
-### Custom Mappings
+1. **Which keys contain expressions?** — By default, only `expression` (the Terraform attribute name).
+2. **What Cloudflare phase does an expression belong to?** — Inferred from YAML parent keys.
 
-Since every team structures their YAML differently, the scanner accepts custom key and phase mappings:
+Both are **extensible** — your custom mappings always merge with the built-in
+defaults. You never lose the defaults unless you explicitly opt out.
+
+### Programmatic API
 
 ```typescript
 import { scanYaml } from 'cloudflare-expression-lint';
 
 const result = scanYaml(yamlContent, 'config.yaml', {
-  // Add custom expression keys (merged with default 'expression')
+  // These MERGE with the built-in defaults
   expressionKeys: {
     'rewrite_expression': { type: 'rewrite_url', phaseHint: 'http_request_transform' },
     'source_url_expression': { type: 'filter', phaseHint: 'http_request_dynamic_redirect' },
-    'target_url_expression': { type: 'redirect_target', phaseHint: 'http_request_dynamic_redirect' },
-    'my_custom_filter': { type: 'filter' },
   },
-
-  // Add custom YAML key → phase mappings (merged with defaults)
   phaseMappings: {
     'waf_rules': 'http_request_firewall_custom',
     'my_transform_rules': 'http_request_transform',
   },
 });
+
+// Inspect defaults
+import { getDefaultExpressionKeys, getDefaultPhaseMappings } from 'cloudflare-expression-lint';
+console.log(getDefaultExpressionKeys()); // { expression: { type: 'filter' } }
+console.log(getDefaultPhaseMappings());  // { cache_rules: '...', http_request_firewall_custom: '...', ... }
 ```
 
 ### Built-in Phase Mappings
 
-The built-in defaults only include Cloudflare phase names used as YAML keys and a few common shorthands:
+The defaults include all Cloudflare phase names as self-mappings plus common shorthands:
 
 | YAML Key | Phase |
 |----------|-------|
@@ -222,13 +277,41 @@ The built-in defaults only include Cloudflare phase names used as YAML keys and 
 | `http_ratelimit` | `http_ratelimit` |
 | `http_request_cache_settings` | `http_request_cache_settings` |
 | `http_request_transform` | `http_request_transform` |
+| `http_request_late_transform` | `http_request_late_transform` |
+| `http_response_headers_transform` | `http_response_headers_transform` |
 | `cache_rules` | `http_request_cache_settings` |
 | `rate_limit_rules` | `http_ratelimit` |
 | `single_redirects` | `http_request_dynamic_redirect` |
 | `origin_rules` | `http_request_origin` |
-| ...and all other `http_*` phase names | *(self-mapping)* |
 
-To use entirely custom mappings: `{ replacePhaseMappings: true, phaseMappings: { ... } }`
+If you need to **replace** all defaults instead of merging, pass
+`replaceExpressionKeys: true` or `replacePhaseMappings: true`.
+
+### ESLint Plugin
+
+```javascript
+// eslint.config.js (flat config)
+import cfExprLint from 'cloudflare-expression-lint/eslint-plugin';
+
+export default [
+  {
+    files: ['config/**/*.yaml'],
+    plugins: { 'cf-expr': cfExprLint },
+    rules: {
+      'cf-expr/validate-expression': ['error', {
+        // Custom mappings (merged with defaults)
+        customKeyMappings: {
+          'rewrite_expression': 'rewrite_url',
+          'source_url_expression': 'filter',
+        },
+        customPhaseMappings: {
+          'waf_rules': 'http_request_firewall_custom',
+        },
+      }],
+    },
+  },
+];
+```
 
 ## CI/CD Integration
 
