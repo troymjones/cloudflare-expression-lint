@@ -69,7 +69,11 @@ interface LocalField {
 
 interface ParsedFunction {
   name: string;
+  params: { name: string; type: string; optional: boolean }[];
   returnType: string;
+  contexts: string[];
+  maxPerExpression?: number;
+  noNestIn?: string[];
 }
 
 interface SyncSummary {
@@ -113,21 +117,92 @@ function parseFunctionsMdx(mdx: string): ParsedFunction[] {
   const sections = mdx.split(/^### `/m);
 
   for (const section of sections.slice(1)) {
-    // Function name is everything before the closing backtick
     const nameMatch = section.match(/^([a-z_][a-z0-9_]*)`/);
     if (!nameMatch) continue;
 
     const name = nameMatch[1];
 
-    // Return type is in <Type text="..." /> after the signature line
-    // Pattern: ): <Type text="ReturnType" />
-    const returnTypeMatch = section.match(/\).*?<Type\s+text="([^"]+)"/);
+    // Parse return type: ): <Type text="ReturnType" />
+    const returnTypeMatch = section.match(/\).*?<\/code>:\s*<Type\s+text="([^"]+)"/);
     const returnType = returnTypeMatch ? mapMdxType(returnTypeMatch[1]) : 'String';
 
-    functions.push({ name, returnType });
+    // Parse params from <code> signature line
+    // Pattern: name(param1 <Type text="T1" /> [, param2 <Type text="T2" />])
+    const params = parseParams(section);
+
+    // Parse context restrictions from :::note blocks
+    const contexts = parseContexts(section);
+
+    // Parse usage limits
+    const maxPerExpression = parseMaxPerExpression(section, name);
+    const noNestIn = parseNoNestIn(section, name);
+
+    functions.push({ name, params, returnType, contexts, maxPerExpression, noNestIn });
   }
 
   return functions;
+}
+
+function parseParams(section: string): { name: string; type: string; optional: boolean }[] {
+  const params: { name: string; type: string; optional: boolean }[] = [];
+
+  // Find the <code>...</code> signature line
+  const sigMatch = section.match(/<code>[^<]*\(([^)]*(?:\([^)]*\))*[^)]*)\)<\/code>/s);
+  if (!sigMatch) return params;
+
+  const sigBody = sigMatch[1];
+
+  // Match each param: name <Type text="ParamType" />
+  // Optional params are wrapped in [, ...]
+  const paramRegex = /(\[?,?\s*)?(\w+)\s*<Type\s+text="([^"]+)"\s*\/>/g;
+  let match;
+  while ((match = paramRegex.exec(sigBody)) !== null) {
+    const optional = (match[1] || '').includes('[');
+    params.push({
+      name: match[2],
+      type: mapMdxType(match[3].split('|')[0].trim()),
+      optional,
+    });
+  }
+
+  return params;
+}
+
+function parseContexts(section: string): string[] {
+  // Look for :::note blocks with context restrictions
+  const noteMatch = section.match(/:::note\n([\s\S]*?):::/);
+  if (!noteMatch) return ['all'];
+
+  const note = noteMatch[1].toLowerCase();
+
+  const contexts: string[] = [];
+
+  if (note.includes('transform rules') || note.includes('header transform'))
+    contexts.push('rewrite_url', 'rewrite_header');
+  if (note.includes('custom rules') || note.includes('waf'))
+    contexts.push('filter');
+  if (note.includes('rate limiting'))
+    contexts.push('filter');
+  if (note.includes('dynamic url redirect') || note.includes('single redirects') || note.includes('url forwarding'))
+    contexts.push('redirect_target');
+  if (note.includes('rewrite expressions'))
+    contexts.push('rewrite_url');
+  if (note.includes('custom error'))
+    contexts.push('rewrite_header');
+
+  // Deduplicate
+  return contexts.length > 0 ? [...new Set(contexts)] : ['all'];
+}
+
+function parseMaxPerExpression(section: string, name: string): number | undefined {
+  if (section.includes(`only use the \`${name}()\` function once`)) return 1;
+  return undefined;
+}
+
+function parseNoNestIn(section: string, name: string): string[] | undefined {
+  const nestMatch = section.match(/cannot nest it with the \[`(\w+)\(\)`\]/);
+  if (nestMatch) return [nestMatch[1]];
+  return undefined;
 }
 
 function mapMdxType(mdxType: string): string {
@@ -224,14 +299,36 @@ function compareFields(
 function compareFunctions(
   cfFunctions: ParsedFunction[],
   localFunctions: string[],
-): { added: ParsedFunction[]; removed: string[] } {
+): { added: ParsedFunction[]; notInDocs: string[] } {
   const cfSet = new Set(cfFunctions.map(f => f.name));
   const localSet = new Set(localFunctions);
 
   const added = cfFunctions.filter(f => !localSet.has(f.name));
-  const removed = localFunctions.filter(f => !cfSet.has(f));
+  const notInDocs = localFunctions.filter(f => !cfSet.has(f));
 
-  return { added, removed };
+  return { added, notInDocs };
+}
+
+function generateFunctionEntry(fn: ParsedFunction): string {
+  const params = fn.params.map(p => {
+    let entry = `{ name: '${p.name}', type: '${p.type}'`;
+    if (p.optional) entry += ', optional: true';
+    return entry + ' }';
+  }).join(',\n        ');
+
+  const contexts = fn.contexts.map(c => `'${c}'`).join(', ');
+
+  let entry = `  {\n    name: '${fn.name}',\n    params: [\n        ${params}\n    ],\n    returnType: '${fn.returnType}',\n    contexts: [${contexts}],`;
+
+  if (fn.maxPerExpression) {
+    entry += `\n    maxPerExpression: ${fn.maxPerExpression},`;
+  }
+  if (fn.noNestIn && fn.noNestIn.length > 0) {
+    entry += `\n    noNestIn: [${fn.noNestIn.map(n => `'${n}'`).join(', ')}],`;
+  }
+
+  entry += '\n  },';
+  return entry;
 }
 
 // ── Apply Changes ────────────────────────────────────────────────────
@@ -249,13 +346,20 @@ function applyFieldChanges(
       .map(cf => `  { name: '${cf.name}', type: '${resolveType(cf)}' },`)
       .join('\n');
     const marker = '/** Build a lookup map for fast field resolution */';
-    const idx = content.indexOf(marker);
-    if (idx === -1) {
+    const markerIdx = content.indexOf(marker);
+    if (markerIdx === -1) {
       console.error('Could not find insertion point in fields.ts');
       return;
     }
-    const syncComment = `  // ── Auto-synced from Cloudflare docs (${today()}) ──────────\n`;
-    content = content.substring(0, idx - 3) + '\n' + syncComment + newEntries + '\n];\n\n' + content.substring(idx);
+    // Find the `];` that closes the FIELDS array
+    const beforeMarker = content.substring(0, markerIdx);
+    const arrayEndIdx = beforeMarker.lastIndexOf('];');
+    if (arrayEndIdx === -1) {
+      console.error('Could not find FIELDS array end');
+      return;
+    }
+    const syncComment = `\n  // ── Auto-synced from Cloudflare docs (${today()}) ──────────\n`;
+    content = content.substring(0, arrayEndIdx) + syncComment + newEntries + '\n];\n' + content.substring(arrayEndIdx + 2);
   }
 
   // Mark removed fields as deprecated
@@ -304,7 +408,7 @@ async function main() {
     fieldsDeprecated: fieldDiff.deprecated.map(f => f.name),
     fieldsTypeChanged: fieldDiff.typeChanged.map(c => `${c.name}: ${c.from} → ${c.to}`),
     functionsAdded: funcDiff.added.map(f => f.name),
-    functionsRemoved: funcDiff.removed,
+    functionsRemoved: funcDiff.notInDocs,
   };
 
   // Report
@@ -358,11 +462,31 @@ async function main() {
     console.log(`\n✓ Applied field changes to ${FIELDS_TS_PATH}`);
   }
 
-  // Report function changes (manual for now — functions have complex signatures)
+  // Apply function additions
   if (funcDiff.added.length > 0) {
-    console.log('\n⚠ New functions detected — add to src/schemas/functions.ts manually:');
-    for (const f of funcDiff.added) {
-      console.log(`    ${f.name}() → ${f.returnType}`);
+    const functionsPath = resolve(__dirname, '../src/schemas/functions.ts');
+    let funcContent = readFileSync(functionsPath, 'utf-8');
+
+    const newEntries = funcDiff.added.map(generateFunctionEntry).join('\n');
+    // Find the end of the FUNCTIONS array: the last `];` before the lookup map
+    const marker = '/** Build lookup map */';
+    const markerIdx = funcContent.indexOf(marker);
+
+    if (markerIdx !== -1) {
+      // Find the `];` that closes the FUNCTIONS array (searching backwards from marker)
+      const beforeMarker = funcContent.substring(0, markerIdx);
+      const arrayEndIdx = beforeMarker.lastIndexOf('];');
+
+      if (arrayEndIdx !== -1) {
+        const syncComment = `\n  // ── Auto-synced from Cloudflare docs (${today()}) ──────────\n`;
+        funcContent = funcContent.substring(0, arrayEndIdx) + syncComment + newEntries + '\n];\n' + funcContent.substring(arrayEndIdx + 2);
+        writeFileSync(functionsPath, funcContent, 'utf-8');
+        console.log(`\n✓ Added ${funcDiff.added.length} new function(s) to ${functionsPath}`);
+      } else {
+        console.log('\n⚠ Could not find FUNCTIONS array end');
+      }
+    } else {
+      console.log('\n⚠ Could not find insertion point in functions.ts');
     }
   }
 
@@ -376,7 +500,7 @@ async function main() {
     summary.fieldsAdded.length > 0 ? `### New Fields (${summary.fieldsAdded.length})\n${summary.fieldsAdded.map(n => `- \`${n}\``).join('\n')}` : '',
     summary.fieldsDeprecated.length > 0 ? `### Deprecated Fields (${summary.fieldsDeprecated.length})\n${summary.fieldsDeprecated.map(n => `- \`${n}\``).join('\n')}` : '',
     summary.fieldsTypeChanged.length > 0 ? `### Type Changes (${summary.fieldsTypeChanged.length})\n${summary.fieldsTypeChanged.map(d => `- ${d}`).join('\n')}` : '',
-    summary.functionsAdded.length > 0 ? `### New Functions (${summary.functionsAdded.length})\n${summary.functionsAdded.map(n => `- \`${n}()\``).join('\n')}\n\n> These need to be added to \`src/schemas/functions.ts\` manually.` : '',
+    summary.functionsAdded.length > 0 ? `### New Functions (${summary.functionsAdded.length})\n${summary.functionsAdded.map(n => `- \`${n}()\``).join('\n')}` : '',
     summary.functionsRemoved.length > 0 ? `### Functions Not In Docs (${summary.functionsRemoved.length})\n${summary.functionsRemoved.map(n => `- \`${n}()\``).join('\n')}` : '',
   ].filter(Boolean).join('\n\n');
 
