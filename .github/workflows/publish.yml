@@ -12,8 +12,6 @@ jobs:
       contents: read
       id-token: write
 
-    environment: npm-publish
-
     steps:
       - uses: actions/checkout@v4
 
@@ -33,7 +31,5 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Publish with provenance
+      - name: Publish with provenance (OIDC Trusted Publishing)
         run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
