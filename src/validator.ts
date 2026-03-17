@@ -81,6 +81,11 @@ export function validate(expression: string, context: ValidationContext): LintRe
   walker.checkFunctionLimits();
   walker.checkRegexCount();
 
+  // Check outer parentheses for Expression Builder compatibility (filter only)
+  if (context.expressionType === 'filter') {
+    checkOuterParentheses(ast, diagnostics, context.requireOuterParentheses);
+  }
+
   const hasErrors = diagnostics.some(d => d.severity === 'error');
   return { expression, valid: !hasErrors, diagnostics, ast };
 }
@@ -495,6 +500,40 @@ class ASTWalker {
       case 'redirect_target': return 'redirect_target';
     }
   }
+}
+
+/**
+ * Check if a filter expression is wrapped in outer parentheses.
+ * The Cloudflare Expression Builder requires this for compatibility —
+ * expressions without outer parens trigger a "not supported" warning
+ * when switching from Editor to Builder in the dashboard.
+ *
+ * Exceptions (no parens needed):
+ * - Bare boolean literals: true, false
+ * - Bare boolean fields: ssl, cf.bot_management.verified_bot
+ * - Function calls at top level: starts_with(...), any(...)
+ */
+function checkOuterParentheses(ast: ASTNode, diagnostics: Diagnostic[], required?: boolean): void {
+  // Already wrapped in a Group — good
+  if (ast.kind === 'Group') return;
+
+  // Bare boolean literals — fine without parens
+  if (ast.kind === 'BooleanLiteral') return;
+
+  // Bare boolean field — fine (e.g., `ssl`, `cf.bot_management.verified_bot`)
+  if (ast.kind === 'FieldAccess') return;
+
+  // Negated boolean field — fine (e.g., `not ssl`)
+  if (ast.kind === 'Not' && ast.operand.kind === 'FieldAccess') return;
+
+  // Top-level function call — these are Builder-incompatible anyway
+  if (ast.kind === 'FunctionCall') return;
+
+  diagnostics.push({
+    severity: required ? 'error' : 'info',
+    message: 'Expression is not wrapped in parentheses. Wrap in (...) for Cloudflare Expression Builder compatibility.',
+    code: 'no-outer-parens',
+  });
 }
 
 /**

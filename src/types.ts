@@ -190,6 +190,9 @@ export interface ValidationContext {
   expressionType: ExpressionType;
   /** Allow placeholder templates like {REPLACE_ZONE_NAME} */
   allowPlaceholders?: boolean;
+  /** Require outer parentheses on filter expressions (for Expression Builder compatibility).
+   *  When true, missing outer parens is an error instead of info. */
+  requireOuterParentheses?: boolean;
 }
 
 // ── Lint Result ────────────────────────────────────────────────────────

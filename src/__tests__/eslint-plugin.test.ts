@@ -284,7 +284,7 @@ describe('createValidateExpressionRule', () => {
 
       visitors['YAMLPair']({
         key: { value: 'expression' },
-        value: { value: 'http.request.uri.path eq "/test"' },
+        value: { value: '(http.request.uri.path eq "/test")' },
       });
 
       expect(reports).toHaveLength(0);
