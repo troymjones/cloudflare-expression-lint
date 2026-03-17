@@ -87,6 +87,13 @@ export interface ScannerOptions {
    * instead of merging with them.
    */
   replacePhaseMappings?: boolean;
+
+  /**
+   * If true, require outer parentheses on filter expressions
+   * (for Expression Builder compatibility). Missing parens becomes
+   * an error instead of info.
+   */
+  requireOuterParentheses?: boolean;
 }
 
 // ── Built-in Defaults ────────────────────────────────────────────────
@@ -172,6 +179,7 @@ export function scanYaml(
       expressionType: loc.expressionType,
       phase: loc.phase,
       allowPlaceholders: true,
+      requireOuterParentheses: options?.requireOuterParentheses,
     };
     const result = validate(loc.expression, ctx);
     return { ...loc, result };
