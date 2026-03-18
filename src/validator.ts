@@ -81,9 +81,14 @@ export function validate(expression: string, context: ValidationContext): LintRe
   walker.checkFunctionLimits();
   walker.checkRegexCount();
 
+  // Check account-level zone plan suffix
+  if (context.accountLevel) {
+    checkAccountLevelSuffix(ast, diagnostics);
+  }
+
   // Check outer parentheses for Expression Builder compatibility (filter only)
   if (context.expressionType === 'filter') {
-    checkOuterParentheses(ast, diagnostics, context.requireOuterParentheses);
+    checkOuterParentheses(ast, diagnostics, context.requireOuterParentheses, context.accountLevel);
   }
 
   const hasErrors = diagnostics.some(d => d.severity === 'error');
@@ -513,7 +518,17 @@ class ASTWalker {
  * - Bare boolean fields: ssl, cf.bot_management.verified_bot
  * - Function calls at top level: starts_with(...), any(...)
  */
-function checkOuterParentheses(ast: ASTNode, diagnostics: Diagnostic[], required?: boolean): void {
+function checkOuterParentheses(ast: ASTNode, diagnostics: Diagnostic[], required?: boolean, accountLevel?: boolean): void {
+  // Account-level expressions have the form: (filter) and (cf.zone.plan eq "ENT")
+  // The outer structure is two groups joined by `and`, not one big wrapped expression.
+  // Check the left side (the filter part) for parens instead of the whole thing.
+  if (accountLevel && isZonePlanSuffixed(ast)) {
+    if (ast.kind === 'Logical') {
+      checkOuterParentheses(ast.left, diagnostics, required, false);
+    }
+    return;
+  }
+
   // Already wrapped in a Group — good
   if (ast.kind === 'Group') return;
 
@@ -534,6 +549,49 @@ function checkOuterParentheses(ast: ASTNode, diagnostics: Diagnostic[], required
     message: 'Expression is not wrapped in parentheses. Wrap in (...) for Cloudflare Expression Builder compatibility.',
     code: 'no-outer-parens',
   });
+}
+
+/**
+ * Check if an AST node ends with `and (cf.zone.plan eq "ENT")`.
+ */
+function isZonePlanSuffixed(ast: ASTNode): boolean {
+  if (ast.kind !== 'Logical') return false;
+  if (ast.operator !== 'and' && ast.operator !== '&&') return false;
+
+  // The right side should be (cf.zone.plan eq "ENT")
+  let right = ast.right;
+  if (right.kind === 'Group') right = right.expression;
+
+  if (right.kind !== 'Comparison') return false;
+  if (right.left.kind !== 'FieldAccess') return false;
+  if (right.left.field !== 'cf.zone.plan') return false;
+  if (right.right.kind !== 'StringLiteral') return false;
+  if (right.right.value !== 'ENT') return false;
+
+  return true;
+}
+
+/**
+ * Check that account-level expressions end with `and (cf.zone.plan eq "ENT")`.
+ */
+function checkAccountLevelSuffix(ast: ASTNode, diagnostics: Diagnostic[]): void {
+  // Standalone (cf.zone.plan eq "ENT") is fine — it's a parent ruleset filter
+  if (ast.kind === 'Group') {
+    const inner = ast.expression;
+    if (inner.kind === 'Comparison' &&
+        inner.left.kind === 'FieldAccess' &&
+        inner.left.field === 'cf.zone.plan') {
+      return;
+    }
+  }
+
+  if (!isZonePlanSuffixed(ast)) {
+    diagnostics.push({
+      severity: 'warning',
+      message: 'Account-level expression should end with `and (cf.zone.plan eq "ENT")` to scope to Enterprise zones',
+      code: 'missing-zone-plan-filter',
+    });
+  }
 }
 
 /**
