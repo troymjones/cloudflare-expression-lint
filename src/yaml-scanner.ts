@@ -97,11 +97,13 @@ export interface ScannerOptions {
   requireOuterParentheses?: boolean;
 
   /**
-   * YAML parent keys that indicate account-level expressions.
-   * Expressions under these keys will be checked for the
-   * `and (cf.zone.plan eq "ENT")` suffix.
+   * File path patterns (glob-style substrings) that indicate account-level
+   * config files. All expressions in matching files will be checked for
+   * the `and (cf.zone.plan eq "ENT")` suffix.
+   *
+   * Example: ["config/account/"] — matches any YAML file under config/account/
    */
-  accountLevelKeys?: string[];
+  accountLevelPaths?: string[];
 }
 
 // ── Built-in Defaults ────────────────────────────────────────────────
@@ -179,10 +181,11 @@ export function scanYaml(
     };
   }
 
-  const accountLevelKeys = new Set(options?.accountLevelKeys ?? []);
+  const accountLevelPaths = options?.accountLevelPaths ?? [];
+  const isAccountLevelFile = accountLevelPaths.some(pattern => filePath.includes(pattern));
 
   const locations: YAMLExpressionLocation[] = [];
-  walkYaml(doc, [], locations, filePath, undefined, false, expressionKeys, phaseMappings, accountLevelKeys);
+  walkYaml(doc, [], locations, filePath, undefined, isAccountLevelFile, expressionKeys, phaseMappings);
 
   const expressions = locations.map(loc => {
     const ctx: ValidationContext = {
@@ -240,25 +243,20 @@ function walkYaml(
   results: YAMLExpressionLocation[],
   filePath: string,
   inferredPhase: string | undefined,
-  inferredAccountLevel: boolean,
+  isAccountLevel: boolean,
   expressionKeys: Record<string, ExpressionKeyMapping>,
   phaseMappings: PhaseMapping,
-  accountLevelKeys: Set<string>,
 ): void {
   if (node === null || node === undefined) return;
 
   if (typeof node === 'object' && !Array.isArray(node)) {
     const obj = node as Record<string, unknown>;
 
-    // Check if any key in this object hints at a phase or account level
+    // Check if any key in this object hints at a phase
     let phase = inferredPhase;
-    let isAccountLevel = inferredAccountLevel;
     for (const key of Object.keys(obj)) {
       if (phaseMappings[key]) {
         phase = phaseMappings[key];
-      }
-      if (accountLevelKeys.has(key)) {
-        isAccountLevel = true;
       }
     }
 
@@ -270,13 +268,18 @@ function walkYaml(
       if (exprInfo && typeof value === 'string') {
         const exprStr = value.trim();
         if (exprStr) {
+          // Account-level check only applies to top-level ruleset expressions,
+          // not to child rules within a ruleset (they inherit the plan filter
+          // from their parent). Detect by checking if 'rules' appears in the path.
+          const isTopLevelRulesetExpr = isAccountLevel && !keyPath.some(p => p === 'rules');
+
           results.push({
             file: filePath,
             yamlPath: keyPath.join('.'),
             expressionType: exprInfo.type,
             phase: exprInfo.phaseHint ?? phase,
             expression: exprStr,
-            accountLevel: isAccountLevel || undefined,
+            accountLevel: isTopLevelRulesetExpr || undefined,
           });
         }
       }
@@ -298,11 +301,11 @@ function walkYaml(
       }
 
       // Recurse
-      walkYaml(value, keyPath, results, filePath, phase, isAccountLevel, expressionKeys, phaseMappings, accountLevelKeys);
+      walkYaml(value, keyPath, results, filePath, phase, isAccountLevel, expressionKeys, phaseMappings);
     }
   } else if (Array.isArray(node)) {
     for (let i = 0; i < node.length; i++) {
-      walkYaml(node[i], [...path, `${i}`], results, filePath, inferredPhase, inferredAccountLevel, expressionKeys, phaseMappings, accountLevelKeys);
+      walkYaml(node[i], [...path, `${i}`], results, filePath, inferredPhase, isAccountLevel, expressionKeys, phaseMappings);
     }
   }
 }
