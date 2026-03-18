@@ -42,7 +42,6 @@ interface CLIOptions {
   quiet: boolean;
   warnExitCode: number;
   ignoreCodes: string[];
-  requireOuterParentheses: boolean;
   help: boolean;
 }
 
@@ -57,7 +56,6 @@ function parseArgs(argv: string[]): CLIOptions {
     quiet: false,
     warnExitCode: 0,
     ignoreCodes: [],
-    requireOuterParentheses: false,
     help: false,
   };
 
@@ -127,9 +125,6 @@ function parseArgs(argv: string[]): CLIOptions {
       case '--ignore-code':
         opts.ignoreCodes.push(argv[++i]);
         break;
-      case '--require-outer-parens':
-        opts.requireOuterParentheses = true;
-        break;
       default:
         if (!arg.startsWith('-')) {
           opts.files.push(arg);
@@ -158,7 +153,6 @@ function buildScannerOptions(opts: CLIOptions): ScannerOptions | undefined {
         expressionKeys?: Record<string, ExpressionKeyMapping>;
         phaseMappings?: Record<string, string>;
         ignoreCodes?: string[];
-        requireOuterParentheses?: boolean;
         accountLevelPaths?: string[];
       };
       if (config.expressionKeys) {
@@ -171,9 +165,6 @@ function buildScannerOptions(opts: CLIOptions): ScannerOptions | undefined {
       }
       if (config.ignoreCodes) {
         opts.ignoreCodes.push(...config.ignoreCodes);
-      }
-      if (config.requireOuterParentheses) {
-        opts.requireOuterParentheses = true;
       }
       if (config.accountLevelPaths) {
         scannerOpts.accountLevelPaths = config.accountLevelPaths;
@@ -203,11 +194,6 @@ function buildScannerOptions(opts: CLIOptions): ScannerOptions | undefined {
     for (const pm of opts.phaseMaps) {
       scannerOpts.phaseMappings[pm.yamlKey] = pm.phase;
     }
-    hasOptions = true;
-  }
-
-  if (opts.requireOuterParentheses) {
-    scannerOpts.requireOuterParentheses = true;
     hasOptions = true;
   }
 
@@ -338,7 +324,6 @@ async function main(): Promise<void> {
     const ctx: ValidationContext = {
       expressionType: opts.type,
       phase: opts.phase,
-      requireOuterParentheses: opts.requireOuterParentheses,
     };
 
     const result = validate(expr, ctx);
