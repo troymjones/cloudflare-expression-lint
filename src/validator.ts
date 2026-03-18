@@ -86,6 +86,11 @@ export function validate(expression: string, context: ValidationContext): LintRe
     checkAccountLevelSuffix(ast, diagnostics);
   }
 
+  // Check for ambiguous operator precedence (and/or mixed without grouping)
+  if (context.expressionType === 'filter') {
+    checkAmbiguousPrecedence(ast, diagnostics);
+  }
+
   // Check Expression Builder compatibility for simple expressions
   if (context.expressionType === 'filter') {
     if (context.accountLevel && isZonePlanSuffixed(ast) && ast.kind === 'Logical') {
@@ -510,6 +515,58 @@ class ASTWalker {
       case 'redirect_target': return 'redirect_target';
     }
   }
+}
+
+/**
+ * Check for ambiguous operator precedence — mixing `and` and `or` without
+ * explicit grouping. Due to precedence, `A and B or C` evaluates as
+ * `(A and B) or C`, not `A and (B or C)`. This is almost always unintentional.
+ */
+function checkAmbiguousPrecedence(ast: ASTNode, diagnostics: Diagnostic[]): void {
+  walkForAmbiguousPrecedence(ast, diagnostics);
+}
+
+function walkForAmbiguousPrecedence(node: ASTNode, diagnostics: Diagnostic[]): void {
+  if (node.kind !== 'Logical') return;
+
+  const op = node.operator === '||' ? 'or' : node.operator === '&&' ? 'and' : node.operator;
+
+  // Check if an `or` node has an unwrapped `and` as a direct child
+  if (op === 'or') {
+    if (isUnwrappedAnd(node.left)) {
+      diagnostics.push({
+        severity: 'warning',
+        message: 'Ambiguous operator precedence: `and` combined with `or` without explicit grouping. ' +
+          'Due to precedence, `A and B or C` evaluates as `(A and B) or C`. ' +
+          'Add explicit parentheses to clarify intent.',
+        code: 'ambiguous-precedence',
+        position: node.position,
+      });
+      return; // One warning per expression is enough
+    }
+    if (isUnwrappedAnd(node.right)) {
+      diagnostics.push({
+        severity: 'warning',
+        message: 'Ambiguous operator precedence: `and` combined with `or` without explicit grouping. ' +
+          'Due to precedence, `A or B and C` evaluates as `A or (B and C)`. ' +
+          'Add explicit parentheses to clarify intent.',
+        code: 'ambiguous-precedence',
+        position: node.position,
+      });
+      return;
+    }
+  }
+
+  // Recurse into children (but not into Groups — those have explicit precedence)
+  if (node.left.kind === 'Logical') walkForAmbiguousPrecedence(node.left, diagnostics);
+  if (node.right.kind === 'Logical') walkForAmbiguousPrecedence(node.right, diagnostics);
+}
+
+/** Check if a node is an `and` chain that isn't wrapped in a Group */
+function isUnwrappedAnd(node: ASTNode): boolean {
+  if (node.kind === 'Group') return false; // explicitly grouped — fine
+  if (node.kind === 'Logical' && (node.operator === 'and' || node.operator === '&&')) return true;
+  return false;
 }
 
 /**
