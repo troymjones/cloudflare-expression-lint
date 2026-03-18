@@ -119,6 +119,78 @@ describe('Expression Builder Compatibility', () => {
     });
   });
 
+  // ── Edge cases ─────────────────────────────────────────────────────
+
+  describe('edge cases', () => {
+    it('skips not inside a branch', () => {
+      // not is not Builder-compatible
+      expect(hasBuilderWarning('(not ssl) or (http.host eq "test")')).toBe(false);
+    });
+
+    it('skips xor operator', () => {
+      expect(hasBuilderWarning('http.host eq "a" xor http.host eq "b"')).toBe(false);
+    });
+
+    it('accepts in-expression with named list wrapped', () => {
+      expect(hasBuilderWarning('(ip.src in $my_allowlist)')).toBe(false);
+    });
+
+    it('accepts many or-branches all wrapped', () => {
+      const branches = Array.from({ length: 10 }, (_, i) =>
+        `(http.request.uri.path eq "/path${i}")`
+      ).join(' or ');
+      expect(hasBuilderWarning(branches)).toBe(false);
+    });
+
+    it('flags many or-branches with some unwrapped', () => {
+      const branches = [
+        '(http.request.uri.path eq "/a")',
+        'http.request.uri.path eq "/b"',
+        '(http.request.uri.path eq "/c")',
+      ].join(' or ');
+      expect(hasBuilderWarning(branches)).toBe(true);
+    });
+
+    it('accepts boolean field wrapped', () => {
+      expect(hasBuilderWarning('(ssl)')).toBe(false);
+    });
+
+    it('accepts wildcard operator wrapped', () => {
+      expect(hasBuilderWarning('(http.host wildcard "*.example.com")')).toBe(false);
+    });
+
+    it('accepts matches operator wrapped', () => {
+      expect(hasBuilderWarning('(http.request.uri.path matches "^/api/")')).toBe(false);
+    });
+
+    it('accepts raw string in comparison', () => {
+      expect(hasBuilderWarning('(http.request.uri.path matches r"^/api/")')).toBe(false);
+    });
+
+    it('accepts the full example from docs', () => {
+      expect(hasBuilderWarning(
+        '(http.cookie eq "abc" and ip.src.country eq "AL" and ip.src.continent eq "EU") or (ip.src.country ne "AF" and http.host wildcard "*.example.com") or (ip.src eq 192.0.2.1)'
+      )).toBe(false);
+    });
+
+    it('flags or-chain inside outer parens where clauses are unwrapped', () => {
+      // ( A or B or C ) — outer group with unwrapped or-clauses inside
+      expect(hasBuilderWarning(
+        '(http.host eq "a" or http.host eq "b" or http.host eq "c")'
+      )).toBe(true);
+    });
+
+    it('skips not at top level', () => {
+      expect(hasBuilderWarning('not http.host eq "test"')).toBe(false);
+    });
+
+    it('skips expression with not in and-chain', () => {
+      expect(hasBuilderWarning(
+        '(ip.src in $list and not http.request.uri.path matches "^/auth/")'
+      )).toBe(false);
+    });
+  });
+
   // ── Severity and context ───────────────────────────────────────────
 
   describe('diagnostic properties', () => {
