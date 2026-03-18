@@ -90,13 +90,6 @@ export interface ScannerOptions {
   replacePhaseMappings?: boolean;
 
   /**
-   * If true, require outer parentheses on filter expressions
-   * (for Expression Builder compatibility). Missing parens becomes
-   * an error instead of info.
-   */
-  requireOuterParentheses?: boolean;
-
-  /**
    * File path patterns (glob-style substrings) that indicate account-level
    * config files. All expressions in matching files will be checked for
    * the `and (cf.zone.plan eq "ENT")` suffix.
@@ -192,7 +185,6 @@ export function scanYaml(
       expressionType: loc.expressionType,
       phase: loc.phase,
       allowPlaceholders: true,
-      requireOuterParentheses: options?.requireOuterParentheses,
       accountLevel: loc.accountLevel,
     };
     const result = validate(loc.expression, ctx);

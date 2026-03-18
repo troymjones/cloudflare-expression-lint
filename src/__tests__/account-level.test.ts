@@ -34,29 +34,4 @@ describe('Account-Level Zone Plan Filter', () => {
       expect(codes('(http.host eq "test.com")', false)).not.toContain('missing-zone-plan-filter');
     });
   });
-
-  describe('outer parens with zone plan suffix', () => {
-    it('does not flag no-outer-parens on the overall expression', () => {
-      // The overall expression is (A) and (cf.zone.plan eq "ENT") — not wrapped in outer parens
-      expect(codes(
-        '(http.host eq "test.com") and (cf.zone.plan eq "ENT")'
-      )).not.toContain('no-outer-parens');
-    });
-
-    it('flags no-outer-parens on the filter part if unwrapped', () => {
-      expect(codes(
-        'http.host eq "test.com" and (cf.zone.plan eq "ENT")'
-      )).toContain('no-outer-parens');
-    });
-
-    it('does not flag when filter part is wrapped', () => {
-      expect(codes(
-        '(http.host eq "test.com") and (cf.zone.plan eq "ENT")'
-      )).not.toContain('no-outer-parens');
-    });
-
-    it('does not flag standalone plan filter', () => {
-      expect(codes('(cf.zone.plan eq "ENT")')).not.toContain('no-outer-parens');
-    });
-  });
 });

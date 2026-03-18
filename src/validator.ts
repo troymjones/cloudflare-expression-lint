@@ -86,10 +86,9 @@ export function validate(expression: string, context: ValidationContext): LintRe
     checkAccountLevelSuffix(ast, diagnostics);
   }
 
-  // Check outer parentheses for Expression Builder compatibility (filter only)
-  if (context.expressionType === 'filter') {
-    checkOuterParentheses(ast, diagnostics, context.requireOuterParentheses, context.accountLevel);
-  }
+  // Outer parentheses check disabled — the Expression Builder format
+  // requires each clause individually wrapped, not just outer parens.
+  // TODO: Implement proper per-clause paren checking when needed.
 
   const hasErrors = diagnostics.some(d => d.severity === 'error');
   return { expression, valid: !hasErrors, diagnostics, ast };
