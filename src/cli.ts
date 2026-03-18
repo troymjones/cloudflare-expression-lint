@@ -159,7 +159,7 @@ function buildScannerOptions(opts: CLIOptions): ScannerOptions | undefined {
         phaseMappings?: Record<string, string>;
         ignoreCodes?: string[];
         requireOuterParentheses?: boolean;
-        accountLevelKeys?: string[];
+        accountLevelPaths?: string[];
       };
       if (config.expressionKeys) {
         scannerOpts.expressionKeys = config.expressionKeys;
@@ -175,8 +175,8 @@ function buildScannerOptions(opts: CLIOptions): ScannerOptions | undefined {
       if (config.requireOuterParentheses) {
         opts.requireOuterParentheses = true;
       }
-      if (config.accountLevelKeys) {
-        scannerOpts.accountLevelKeys = config.accountLevelKeys;
+      if (config.accountLevelPaths) {
+        scannerOpts.accountLevelPaths = config.accountLevelPaths;
         hasOptions = true;
       }
     } catch (err) {
