@@ -159,6 +159,7 @@ function buildScannerOptions(opts: CLIOptions): ScannerOptions | undefined {
         phaseMappings?: Record<string, string>;
         ignoreCodes?: string[];
         requireOuterParentheses?: boolean;
+        accountLevelKeys?: string[];
       };
       if (config.expressionKeys) {
         scannerOpts.expressionKeys = config.expressionKeys;
@@ -173,6 +174,10 @@ function buildScannerOptions(opts: CLIOptions): ScannerOptions | undefined {
       }
       if (config.requireOuterParentheses) {
         opts.requireOuterParentheses = true;
+      }
+      if (config.accountLevelKeys) {
+        scannerOpts.accountLevelKeys = config.accountLevelKeys;
+        hasOptions = true;
       }
     } catch (err) {
       console.error(`Error reading config file ${configPath}: ${err instanceof Error ? err.message : err}`);

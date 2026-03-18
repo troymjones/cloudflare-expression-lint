@@ -193,6 +193,9 @@ export interface ValidationContext {
   /** Require outer parentheses on filter expressions (for Expression Builder compatibility).
    *  When true, missing outer parens is an error instead of info. */
   requireOuterParentheses?: boolean;
+  /** If true, this is an account-level expression that must end with
+   *  `and (cf.zone.plan eq "ENT")`. */
+  accountLevel?: boolean;
 }
 
 // ── Lint Result ────────────────────────────────────────────────────────
