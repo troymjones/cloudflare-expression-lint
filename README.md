@@ -236,6 +236,11 @@ All standard Cloudflare functions are supported, with context-aware validation:
 | `invalid-wildcard-pattern` | warning | Wildcard contains `**` (prohibited) |
 | `empty-in-list` | warning | Empty `in {}` list will never match |
 | `too-many-regex` | warning | More than 64 regex patterns per expression |
+| `ambiguous-precedence` | warning | Mixed `and`/`or` without explicit grouping |
+| `expression-whitespace` | warning | Leading or trailing whitespace in expression |
+| `missing-zone-plan-filter` | warning | Account-level expression missing `and (cf.zone.plan eq "ENT")` |
+| `builder-incompatible` | info | Expression not in Cloudflare Expression Builder format |
+| `prefer-english-operator` | info | Suggests `eq` instead of `==`, `and` instead of `&&`, etc. |
 | `prefer-bare-boolean` | info | Prefer `ssl` over `ssl == true` |
 
 ## How Mappings Work
