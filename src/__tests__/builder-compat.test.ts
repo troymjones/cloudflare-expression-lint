@@ -36,7 +36,7 @@ describe('Expression Builder Compatibility', () => {
 
     it('accepts (A) or (B) or (C) — simple or-chain wrapped', () => {
       expect(hasBuilderWarning(
-        '(http.request.uri.path eq "/home") or (http.request.uri.path eq "/dashboard") or (http.request.uri.path eq "/my/dashboard")'
+        '(http.request.uri.path eq "/home") or (http.request.uri.path eq "/dashboard") or (http.request.uri.path eq "/account/settings")'
       )).toBe(false);
     });
 
