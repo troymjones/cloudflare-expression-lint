@@ -91,6 +91,9 @@ export function validate(expression: string, context: ValidationContext): LintRe
     checkAmbiguousPrecedence(ast, diagnostics);
   }
 
+  // Check for C-like operator style (suggest English notation)
+  checkOperatorStyle(ast, diagnostics);
+
   // Check Expression Builder compatibility for simple expressions
   if (context.expressionType === 'filter') {
     if (context.accountLevel && isZonePlanSuffixed(ast) && ast.kind === 'Logical') {
@@ -514,6 +517,57 @@ class ASTWalker {
       case 'rewrite_header': return 'rewrite_header';
       case 'redirect_target': return 'redirect_target';
     }
+  }
+}
+
+/**
+ * Check for C-like operator notation and suggest English notation.
+ * The Expression Builder only generates English notation (eq, ne, and, or).
+ */
+function checkOperatorStyle(ast: ASTNode, diagnostics: Diagnostic[]): void {
+  walkForOperatorStyle(ast, diagnostics, new Set());
+}
+
+const CLIKE_TO_ENGLISH: Record<string, string> = {
+  '==': 'eq', '!=': 'ne', '<': 'lt', '<=': 'le', '>': 'gt', '>=': 'ge',
+  '~': 'matches', '&&': 'and', '||': 'or', '!': 'not', '^^': 'xor',
+};
+
+function walkForOperatorStyle(node: ASTNode, diagnostics: Diagnostic[], reported: Set<string>): void {
+  if (node.kind === 'Comparison') {
+    const english = CLIKE_TO_ENGLISH[node.operator];
+    if (english && !reported.has(node.operator)) {
+      reported.add(node.operator);
+      diagnostics.push({
+        severity: 'info',
+        message: `Use English notation "${english}" instead of "${node.operator}" for consistency with Expression Builder`,
+        code: 'prefer-english-operator',
+        position: node.position,
+      });
+    }
+    walkForOperatorStyle(node.left, diagnostics, reported);
+    walkForOperatorStyle(node.right, diagnostics, reported);
+  } else if (node.kind === 'Logical') {
+    const english = CLIKE_TO_ENGLISH[node.operator];
+    if (english && !reported.has(node.operator)) {
+      reported.add(node.operator);
+      diagnostics.push({
+        severity: 'info',
+        message: `Use English notation "${english}" instead of "${node.operator}" for consistency with Expression Builder`,
+        code: 'prefer-english-operator',
+        position: node.position,
+      });
+    }
+    walkForOperatorStyle(node.left, diagnostics, reported);
+    walkForOperatorStyle(node.right, diagnostics, reported);
+  } else if (node.kind === 'Group') {
+    walkForOperatorStyle(node.expression, diagnostics, reported);
+  } else if (node.kind === 'Not') {
+    walkForOperatorStyle(node.operand, diagnostics, reported);
+  } else if (node.kind === 'InExpression') {
+    walkForOperatorStyle(node.field, diagnostics, reported);
+  } else if (node.kind === 'FunctionCall') {
+    for (const arg of node.args) walkForOperatorStyle(arg, diagnostics, reported);
   }
 }
 
