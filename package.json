@@ -1,6 +1,6 @@
 {
   "name": "cloudflare-expression-lint",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "description": "A parser, validator, and linter for Cloudflare Rules Language expressions with phase-aware field and function checking",
   "type": "module",
   "main": "./dist/index.js",
