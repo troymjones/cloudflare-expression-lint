@@ -545,6 +545,9 @@ function checkBuilderCompatibility(ast: ASTNode, diagnostics: Diagnostic[]): voi
 
   // Single unwrapped in-expression — needs (field in {...})
   if (ast.kind === 'InExpression') {
+    // Negated or function-call field — not Builder-compatible
+    if (ast.negated) return;
+    if (ast.field.kind === 'FunctionCall' || ast.field.kind === 'ArrayUnpack') return;
     diagnostics.push({
       severity: 'info',
       message: 'Wrap in parentheses for Expression Builder compatibility: (field in {...})',
