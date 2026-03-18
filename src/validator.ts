@@ -653,7 +653,8 @@ function isAllOr(node: ASTNode): boolean {
   return true; // left is a leaf or and-branch (both fine as or-branch content)
 }
 
-/** Check if a logical chain contains only simple leaves (no functions, not, nested groups) */
+/** Check if a logical chain contains only simple leaves (no functions, nested groups)
+ *  `not` is allowed on individual comparisons (Builder supports it as a toggle) */
 function isSimpleChain(node: ASTNode): boolean {
   if (node.kind === 'Logical') {
     return isSimpleChain(node.left) && isSimpleChain(node.right);
@@ -661,7 +662,14 @@ function isSimpleChain(node: ASTNode): boolean {
   if (node.kind === 'Comparison') {
     return node.left.kind !== 'FunctionCall' && node.left.kind !== 'ArrayUnpack';
   }
-  if (node.kind === 'InExpression') return true;
+  if (node.kind === 'InExpression') {
+    // Negated in-expressions are fine if the field is simple
+    return node.field.kind !== 'FunctionCall' && node.field.kind !== 'ArrayUnpack';
+  }
+  if (node.kind === 'Not') {
+    // not wrapping a simple comparison or in-expression is Builder-compatible
+    return isSimpleChain(node.operand);
+  }
   if (node.kind === 'FieldAccess') return true;
   if (node.kind === 'BooleanLiteral') return true;
   if (node.kind === 'Group') return isSimpleChain(node.expression);

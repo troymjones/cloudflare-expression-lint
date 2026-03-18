@@ -92,7 +92,8 @@ describe('Expression Builder Compatibility', () => {
       expect(hasBuilderWarning('starts_with(http.request.uri.path, "/admin")')).toBe(false);
     });
 
-    it('skips not expressions', () => {
+    it('skips bare not at top level', () => {
+      // Top-level not without wrapping — skip since it's ambiguous
       expect(hasBuilderWarning('not ssl')).toBe(false);
     });
 
@@ -122,9 +123,15 @@ describe('Expression Builder Compatibility', () => {
   // ── Edge cases ─────────────────────────────────────────────────────
 
   describe('edge cases', () => {
-    it('skips not inside a branch', () => {
-      // not is not Builder-compatible
-      expect(hasBuilderWarning('(not ssl) or (http.host eq "test")')).toBe(false);
+    it('accepts not inside a wrapped branch', () => {
+      // Builder supports not as a toggle on individual comparisons
+      expect(hasBuilderWarning('(not http.cookie contains "abc" and not http.cookie contains "xyz")')).toBe(false);
+    });
+
+    it('accepts not in or-branches', () => {
+      expect(hasBuilderWarning(
+        '(not http.cookie contains "abc" and not http.cookie contains "xyz") or (not http.cookie contains "def" and ip.src.continent ne "NA" and ip.src.country eq "US")'
+      )).toBe(false);
     });
 
     it('skips xor operator', () => {
@@ -184,9 +191,15 @@ describe('Expression Builder Compatibility', () => {
       expect(hasBuilderWarning('not http.host eq "test"')).toBe(false);
     });
 
-    it('skips expression with not in and-chain', () => {
+    it('accepts not in and-chain inside group', () => {
       expect(hasBuilderWarning(
         '(ip.src in $list and not http.request.uri.path matches "^/auth/")'
+      )).toBe(false);
+    });
+
+    it('skips not with function call field', () => {
+      expect(hasBuilderWarning(
+        'not lower(http.request.headers["x-country-code"][0]) in {"gb" "us"}'
       )).toBe(false);
     });
   });
