@@ -209,12 +209,30 @@ describe('Expression Builder Compatibility', () => {
       expect(result.diagnostics.some(d => d.code === 'builder-incompatible')).toBe(false);
     });
 
-    it('skips account-level expressions', () => {
-      const result = validate('(http.host eq "test.com") and (cf.zone.plan eq "ENT")', {
-        expressionType: 'filter',
-        accountLevel: true,
+    it('checks filter part of account-level expressions', () => {
+      // Wrapped filter + ENT — should pass
+      const r1 = validate('(http.host eq "test.com") and (cf.zone.plan eq "ENT")', {
+        expressionType: 'filter', accountLevel: true,
       });
-      expect(result.diagnostics.some(d => d.code === 'builder-incompatible')).toBe(false);
+      expect(r1.diagnostics.some(d => d.code === 'builder-incompatible')).toBe(false);
+
+      // Unwrapped filter + ENT — should flag
+      const r2 = validate('http.host eq "test.com" and (cf.zone.plan eq "ENT")', {
+        expressionType: 'filter', accountLevel: true,
+      });
+      expect(r2.diagnostics.some(d => d.code === 'builder-incompatible')).toBe(true);
+
+      // Standalone ENT — should pass
+      const r3 = validate('(cf.zone.plan eq "ENT")', {
+        expressionType: 'filter', accountLevel: true,
+      });
+      expect(r3.diagnostics.some(d => d.code === 'builder-incompatible')).toBe(false);
+
+      // Wrapped and-chain + ENT — should pass
+      const r4 = validate('(http.host eq "test.com" and http.request.method eq "POST") and (cf.zone.plan eq "ENT")', {
+        expressionType: 'filter', accountLevel: true,
+      });
+      expect(r4.diagnostics.some(d => d.code === 'builder-incompatible')).toBe(false);
     });
   });
 });

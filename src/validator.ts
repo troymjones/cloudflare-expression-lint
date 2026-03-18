@@ -87,8 +87,13 @@ export function validate(expression: string, context: ValidationContext): LintRe
   }
 
   // Check Expression Builder compatibility for simple expressions
-  if (context.expressionType === 'filter' && !context.accountLevel) {
-    checkBuilderCompatibility(ast, diagnostics);
+  if (context.expressionType === 'filter') {
+    if (context.accountLevel && isZonePlanSuffixed(ast) && ast.kind === 'Logical') {
+      // For account-level, check only the filter part (left of the ENT suffix)
+      checkBuilderCompatibility(ast.left, diagnostics);
+    } else if (!context.accountLevel) {
+      checkBuilderCompatibility(ast, diagnostics);
+    }
   }
 
   const hasErrors = diagnostics.some(d => d.severity === 'error');
