@@ -86,9 +86,10 @@ export function validate(expression: string, context: ValidationContext): LintRe
     checkAccountLevelSuffix(ast, diagnostics);
   }
 
-  // Outer parentheses check disabled — the Expression Builder format
-  // requires each clause individually wrapped, not just outer parens.
-  // TODO: Implement proper per-clause paren checking when needed.
+  // Check Expression Builder compatibility for simple expressions
+  if (context.expressionType === 'filter' && !context.accountLevel) {
+    checkBuilderCompatibility(ast, diagnostics);
+  }
 
   const hasErrors = diagnostics.some(d => d.severity === 'error');
   return { expression, valid: !hasErrors, diagnostics, ast };
@@ -507,47 +508,115 @@ class ASTWalker {
 }
 
 /**
- * Check if a filter expression is wrapped in outer parentheses.
- * The Cloudflare Expression Builder requires this for compatibility —
- * expressions without outer parens trigger a "not supported" warning
- * when switching from Editor to Builder in the dashboard.
+ * Check if a simple expression is formatted for Cloudflare Expression Builder
+ * compatibility. The Builder requires each comparison clause individually
+ * wrapped in parentheses: `(A) or (B) or (C)`.
  *
- * Exceptions (no parens needed):
- * - Bare boolean literals: true, false
- * - Bare boolean fields: ssl, cf.bot_management.verified_bot
- * - Function calls at top level: starts_with(...), any(...)
+ * Only flags expressions that ARE simple enough for the Builder but aren't
+ * formatted correctly. Complex expressions (functions, not, mixed and/or,
+ * nested groups) are silently skipped since they can't be represented in
+ * the Builder regardless.
  */
-function checkOuterParentheses(ast: ASTNode, diagnostics: Diagnostic[], required?: boolean, accountLevel?: boolean): void {
-  // Account-level expressions have the form: (filter) and (cf.zone.plan eq "ENT")
-  // The outer structure is two groups joined by `and`, not one big wrapped expression.
-  // Check the left side (the filter part) for parens instead of the whole thing.
-  if (accountLevel && isZonePlanSuffixed(ast)) {
-    if (ast.kind === 'Logical') {
-      checkOuterParentheses(ast.left, diagnostics, required, false);
+function checkBuilderCompatibility(ast: ASTNode, diagnostics: Diagnostic[]): void {
+  // Bare boolean literals — fine without parens
+  if (ast.kind === 'BooleanLiteral') return;
+
+  // Bare boolean field — Builder can handle these
+  if (ast.kind === 'FieldAccess') return;
+
+  // Single comparison — should be wrapped: (field op value)
+  if (ast.kind === 'Comparison') {
+    // Check if left side uses functions — not Builder-compatible
+    if (ast.left.kind === 'FunctionCall' || ast.left.kind === 'ArrayUnpack') return;
+    diagnostics.push({
+      severity: 'info',
+      message: 'Wrap comparison in parentheses for Expression Builder compatibility: (field op value)',
+      code: 'builder-incompatible',
+    });
+    return;
+  }
+
+  // Single in-expression — should be wrapped: (field in {...})
+  if (ast.kind === 'InExpression') {
+    diagnostics.push({
+      severity: 'info',
+      message: 'Wrap in-expression in parentheses for Expression Builder compatibility: (field in {...})',
+      code: 'builder-incompatible',
+    });
+    return;
+  }
+
+  // Single group containing a simple comparison or in-expression — already good
+  if (ast.kind === 'Group') {
+    const inner = ast.expression;
+    if (inner.kind === 'Comparison' || inner.kind === 'InExpression') return;
+    // Group containing a logical chain — check the chain
+    if (inner.kind === 'Logical') {
+      // Unwrap and check the chain
+      checkBuilderCompatibility(inner, diagnostics);
+      return;
+    }
+    // Complex group contents — skip
+    return;
+  }
+
+  // Logical chain — check if it uses a single operator type (all or / all and)
+  if (ast.kind === 'Logical') {
+    // Collect all clauses and check they're all the same operator
+    const clauses: ASTNode[] = [];
+    const operators = new Set<string>();
+    collectLogicalClauses(ast, clauses, operators);
+
+    // Mixed operators (and + or) — too complex for Builder
+    if (operators.size > 1) return;
+
+    // Contains not, function calls, or nested groups — too complex
+    for (const clause of clauses) {
+      if (clause.kind === 'Not') return;
+      if (clause.kind === 'FunctionCall') return;
+      if (clause.kind === 'ArrayUnpack') return;
+      // Unwrap groups to check their contents
+      const inner = clause.kind === 'Group' ? clause.expression : clause;
+      if (inner.kind === 'FunctionCall') return;
+      if (inner.kind === 'Not') return;
+      if (inner.kind === 'Logical') return; // nested logical = too complex
+    }
+
+    // Simple chain — check each clause is wrapped in parens
+    const unwrapped: ASTNode[] = [];
+    for (const clause of clauses) {
+      if (clause.kind !== 'Group') {
+        unwrapped.push(clause);
+      }
+    }
+
+    if (unwrapped.length > 0) {
+      diagnostics.push({
+        severity: 'info',
+        message: `Wrap each clause in parentheses for Expression Builder compatibility. ${unwrapped.length} of ${clauses.length} clause(s) need wrapping.`,
+        code: 'builder-incompatible',
+      });
     }
     return;
   }
 
-  // Already wrapped in a Group — good
-  if (ast.kind === 'Group') return;
+  // Everything else (Not, FunctionCall, etc.) — not Builder-compatible, skip silently
+}
 
-  // Bare boolean literals — fine without parens
-  if (ast.kind === 'BooleanLiteral') return;
-
-  // Bare boolean field — fine (e.g., `ssl`, `cf.bot_management.verified_bot`)
-  if (ast.kind === 'FieldAccess') return;
-
-  // Negated boolean field — fine (e.g., `not ssl`)
-  if (ast.kind === 'Not' && ast.operand.kind === 'FieldAccess') return;
-
-  // Top-level function call — these are Builder-incompatible anyway
-  if (ast.kind === 'FunctionCall') return;
-
-  diagnostics.push({
-    severity: required ? 'error' : 'info',
-    message: 'Expression is not wrapped in parentheses. Wrap in (...) for Cloudflare Expression Builder compatibility.',
-    code: 'no-outer-parens',
-  });
+/**
+ * Collect all leaf clauses from a chain of the same logical operator.
+ * E.g., `A or B or C` → [A, B, C] with operators = {'or'}
+ */
+function collectLogicalClauses(node: ASTNode, clauses: ASTNode[], operators: Set<string>): void {
+  if (node.kind !== 'Logical') {
+    clauses.push(node);
+    return;
+  }
+  // Normalize operator names
+  const op = node.operator === '||' ? 'or' : node.operator === '&&' ? 'and' : node.operator === '^^' ? 'xor' : node.operator;
+  operators.add(op);
+  collectLogicalClauses(node.left, clauses, operators);
+  collectLogicalClauses(node.right, clauses, operators);
 }
 
 /**
