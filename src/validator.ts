@@ -508,115 +508,166 @@ class ASTWalker {
 }
 
 /**
- * Check if a simple expression is formatted for Cloudflare Expression Builder
- * compatibility. The Builder requires each comparison clause individually
- * wrapped in parentheses: `(A) or (B) or (C)`.
+ * Check if an expression is formatted for Cloudflare Expression Builder
+ * compatibility.
+ *
+ * The Builder format is:
+ *   - Single comparison or all-and: `(A and B and C)` — one wrapping group
+ *   - Or-branches: `(A and B) or (C and D) or (E)` — each or-branch wrapped
+ *   - Single comparison: `(A)` — wrapped
  *
  * Only flags expressions that ARE simple enough for the Builder but aren't
- * formatted correctly. Complex expressions (functions, not, mixed and/or,
- * nested groups) are silently skipped since they can't be represented in
- * the Builder regardless.
+ * formatted correctly. Complex expressions (functions, not, xor, nested
+ * or-inside-and) are silently skipped.
  */
 function checkBuilderCompatibility(ast: ASTNode, diagnostics: Diagnostic[]): void {
-  // Bare boolean literals — fine without parens
+  // Bare boolean literals — fine
   if (ast.kind === 'BooleanLiteral') return;
 
-  // Bare boolean field — Builder can handle these
+  // Bare boolean field — fine
   if (ast.kind === 'FieldAccess') return;
 
-  // Single comparison — should be wrapped: (field op value)
+  // Single unwrapped comparison — needs (field op value)
   if (ast.kind === 'Comparison') {
-    // Check if left side uses functions — not Builder-compatible
     if (ast.left.kind === 'FunctionCall' || ast.left.kind === 'ArrayUnpack') return;
     diagnostics.push({
       severity: 'info',
-      message: 'Wrap comparison in parentheses for Expression Builder compatibility: (field op value)',
+      message: 'Wrap in parentheses for Expression Builder compatibility: (field op value)',
       code: 'builder-incompatible',
     });
     return;
   }
 
-  // Single in-expression — should be wrapped: (field in {...})
+  // Single unwrapped in-expression — needs (field in {...})
   if (ast.kind === 'InExpression') {
     diagnostics.push({
       severity: 'info',
-      message: 'Wrap in-expression in parentheses for Expression Builder compatibility: (field in {...})',
+      message: 'Wrap in parentheses for Expression Builder compatibility: (field in {...})',
       code: 'builder-incompatible',
     });
     return;
   }
 
-  // Single group containing a simple comparison or in-expression — already good
+  // Group — check what's inside
   if (ast.kind === 'Group') {
     const inner = ast.expression;
+    // (comparison) or (in-expression) — already good
     if (inner.kind === 'Comparison' || inner.kind === 'InExpression') return;
-    // Group containing a logical chain — check the chain
+    // (A and B and C) — all-and inside one group, already good
+    if (inner.kind === 'Logical' && isAllAnd(inner) && isSimpleChain(inner)) return;
+    // (or-chain) — check the or-chain inside
     if (inner.kind === 'Logical') {
-      // Unwrap and check the chain
       checkBuilderCompatibility(inner, diagnostics);
       return;
     }
-    // Complex group contents — skip
+    // Boolean field etc in group — fine
+    if (inner.kind === 'BooleanLiteral' || inner.kind === 'FieldAccess') return;
     return;
   }
 
-  // Logical chain — check if it uses a single operator type (all or / all and)
+  // Logical chain at top level
   if (ast.kind === 'Logical') {
-    // Collect all clauses and check they're all the same operator
-    const clauses: ASTNode[] = [];
-    const operators = new Set<string>();
-    collectLogicalClauses(ast, clauses, operators);
-
-    // Mixed operators (and + or) — too complex for Builder
-    if (operators.size > 1) return;
-
-    // Contains not, function calls, or nested groups — too complex
-    for (const clause of clauses) {
-      if (clause.kind === 'Not') return;
-      if (clause.kind === 'FunctionCall') return;
-      if (clause.kind === 'ArrayUnpack') return;
-      // Unwrap groups to check their contents
-      const inner = clause.kind === 'Group' ? clause.expression : clause;
-      if (inner.kind === 'FunctionCall') return;
-      if (inner.kind === 'Not') return;
-      if (inner.kind === 'Logical') return; // nested logical = too complex
+    // Collect top-level or-branches
+    const orBranches: ASTNode[] = [];
+    if (isAllOr(ast)) {
+      collectOrBranches(ast, orBranches);
+    } else if (isAllAnd(ast)) {
+      // All-and at top level — should be wrapped in one group: (A and B and C)
+      if (!isSimpleChain(ast)) return; // complex contents, skip
+      diagnostics.push({
+        severity: 'info',
+        message: 'Wrap and-chain in parentheses for Expression Builder compatibility: (A and B and C)',
+        code: 'builder-incompatible',
+      });
+      return;
+    } else {
+      // Mixed operators or xor — too complex, skip
+      return;
     }
 
-    // Simple chain — check each clause is wrapped in parens
+    // Check each or-branch is a wrapped group
     const unwrapped: ASTNode[] = [];
-    for (const clause of clauses) {
-      if (clause.kind !== 'Group') {
-        unwrapped.push(clause);
+    for (const branch of orBranches) {
+      // Each branch should be a Group
+      if (branch.kind === 'Group') {
+        const inner = branch.expression;
+        // Inside should be simple: comparison, in-expression, or all-and chain
+        if (inner.kind === 'Comparison' || inner.kind === 'InExpression') continue;
+        if (inner.kind === 'Logical' && isAllAnd(inner) && isSimpleChain(inner)) continue;
+        if (inner.kind === 'FieldAccess') continue;
+        // Complex group contents — skip entire check
+        return;
       }
+      // Not a group — check if it's simple enough to be Builder-compatible
+      if (branch.kind === 'Comparison' || branch.kind === 'InExpression' || branch.kind === 'FieldAccess') {
+        unwrapped.push(branch);
+        continue;
+      }
+      if (branch.kind === 'Logical' && isAllAnd(branch) && isSimpleChain(branch)) {
+        unwrapped.push(branch);
+        continue;
+      }
+      // Complex branch — skip entire check
+      return;
     }
 
     if (unwrapped.length > 0) {
       diagnostics.push({
         severity: 'info',
-        message: `Wrap each clause in parentheses for Expression Builder compatibility. ${unwrapped.length} of ${clauses.length} clause(s) need wrapping.`,
+        message: `Wrap each or-branch in parentheses for Expression Builder compatibility. ${unwrapped.length} of ${orBranches.length} branch(es) need wrapping.`,
         code: 'builder-incompatible',
       });
     }
     return;
   }
 
-  // Everything else (Not, FunctionCall, etc.) — not Builder-compatible, skip silently
+  // Everything else (Not, FunctionCall, etc.) — not Builder-compatible, skip
 }
 
-/**
- * Collect all leaf clauses from a chain of the same logical operator.
- * E.g., `A or B or C` → [A, B, C] with operators = {'or'}
- */
-function collectLogicalClauses(node: ASTNode, clauses: ASTNode[], operators: Set<string>): void {
-  if (node.kind !== 'Logical') {
-    clauses.push(node);
-    return;
+/** Check if a logical chain uses only `and`/`&&` */
+function isAllAnd(node: ASTNode): boolean {
+  if (node.kind !== 'Logical') return true;
+  const op = node.operator;
+  if (op !== 'and' && op !== '&&') return false;
+  return isAllAnd(node.left) && isAllAnd(node.right);
+}
+
+/** Check if the top-level logical chain uses only `or`/`||` (doesn't recurse into branches) */
+function isAllOr(node: ASTNode): boolean {
+  if (node.kind !== 'Logical') return true;
+  const op = node.operator;
+  if (op !== 'or' && op !== '||') return false;
+  // Only recurse into the or-chain structure, not into and-branches
+  const leftIsOr = node.left.kind !== 'Logical' || node.left.operator === 'or' || node.left.operator === '||';
+  if (node.left.kind === 'Logical' && (node.left.operator === 'or' || node.left.operator === '||')) {
+    return isAllOr(node.left);
   }
-  // Normalize operator names
-  const op = node.operator === '||' ? 'or' : node.operator === '&&' ? 'and' : node.operator === '^^' ? 'xor' : node.operator;
-  operators.add(op);
-  collectLogicalClauses(node.left, clauses, operators);
-  collectLogicalClauses(node.right, clauses, operators);
+  return true; // left is a leaf or and-branch (both fine as or-branch content)
+}
+
+/** Check if a logical chain contains only simple leaves (no functions, not, nested groups) */
+function isSimpleChain(node: ASTNode): boolean {
+  if (node.kind === 'Logical') {
+    return isSimpleChain(node.left) && isSimpleChain(node.right);
+  }
+  if (node.kind === 'Comparison') {
+    return node.left.kind !== 'FunctionCall' && node.left.kind !== 'ArrayUnpack';
+  }
+  if (node.kind === 'InExpression') return true;
+  if (node.kind === 'FieldAccess') return true;
+  if (node.kind === 'BooleanLiteral') return true;
+  if (node.kind === 'Group') return isSimpleChain(node.expression);
+  return false;
+}
+
+/** Collect top-level or-branches from an all-or chain */
+function collectOrBranches(node: ASTNode, branches: ASTNode[]): void {
+  if (node.kind === 'Logical' && (node.operator === 'or' || node.operator === '||')) {
+    collectOrBranches(node.left, branches);
+    collectOrBranches(node.right, branches);
+  } else {
+    branches.push(node);
+  }
 }
 
 /**

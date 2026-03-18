@@ -13,24 +13,30 @@ function hasBuilderWarning(expr: string): boolean {
 describe('Expression Builder Compatibility', () => {
   // ── Already Builder-compatible (no warning) ────────────────────────
 
-  describe('expressions already Builder-compatible', () => {
-    it('accepts wrapped single comparison', () => {
+  describe('already Builder-compatible', () => {
+    it('accepts (single comparison)', () => {
       expect(hasBuilderWarning('(http.host eq "test.com")')).toBe(false);
     });
 
-    it('accepts wrapped in-expression', () => {
+    it('accepts (single in-expression)', () => {
       expect(hasBuilderWarning('(ip.src.country in {"US" "JP"})')).toBe(false);
     });
 
-    it('accepts chain of wrapped clauses with or', () => {
+    it('accepts (A and B and C) — all-and in one group', () => {
       expect(hasBuilderWarning(
-        '(http.request.uri.path eq "/my") or (http.request.uri.path eq "/myjobs")'
+        '(http.cookie eq "abc" and ip.src.country eq "AL" and ip.src.continent eq "EU")'
       )).toBe(false);
     });
 
-    it('accepts chain of wrapped clauses with and', () => {
+    it('accepts (A and B) or (C and D) or (E) — or-branches wrapped', () => {
       expect(hasBuilderWarning(
-        '(http.host eq "test.com") and (http.request.method eq "POST")'
+        '(http.cookie eq "abc" and ip.src.country eq "AL") or (ip.src.country ne "AF" and http.host wildcard "*.example.com") or (ip.src eq 192.0.2.1)'
+      )).toBe(false);
+    });
+
+    it('accepts (A) or (B) or (C) — simple or-chain wrapped', () => {
+      expect(hasBuilderWarning(
+        '(http.request.uri.path eq "/my") or (http.request.uri.path eq "/myjobs") or (http.request.uri.path eq "/my/myjobs")'
       )).toBe(false);
     });
 
@@ -43,7 +49,7 @@ describe('Expression Builder Compatibility', () => {
     });
   });
 
-  // ── Simple but not Builder-formatted (should warn) ─────────────────
+  // ── Simple but needs formatting (should warn) ──────────────────────
 
   describe('simple expressions needing Builder formatting', () => {
     it('flags unwrapped single comparison', () => {
@@ -54,35 +60,40 @@ describe('Expression Builder Compatibility', () => {
       expect(hasBuilderWarning('ip.src.country in {"US" "JP"}')).toBe(true);
     });
 
-    it('flags chain where some clauses lack parens', () => {
+    it('flags unwrapped all-and chain', () => {
+      expect(hasBuilderWarning(
+        'http.host eq "test.com" and http.request.method eq "POST"'
+      )).toBe(true);
+    });
+
+    it('flags or-chain where some branches lack parens', () => {
       expect(hasBuilderWarning(
         'http.request.uri.path eq "/my" or http.request.uri.path eq "/myjobs"'
       )).toBe(true);
     });
 
-    it('flags mixed wrapped and unwrapped', () => {
+    it('flags mixed wrapped and unwrapped or-branches', () => {
       expect(hasBuilderWarning(
         '(http.host eq "test.com") or http.request.method eq "POST"'
+      )).toBe(true);
+    });
+
+    it('flags unwrapped and-group in or-chain', () => {
+      expect(hasBuilderWarning(
+        'http.host eq "a.com" and ip.src.country eq "US" or (http.host eq "b.com")'
       )).toBe(true);
     });
   });
 
   // ── Complex expressions (silently skipped) ─────────────────────────
 
-  describe('complex expressions skipped silently', () => {
+  describe('complex expressions skipped', () => {
     it('skips function calls', () => {
       expect(hasBuilderWarning('starts_with(http.request.uri.path, "/admin")')).toBe(false);
     });
 
     it('skips not expressions', () => {
       expect(hasBuilderWarning('not ssl')).toBe(false);
-    });
-
-    it('skips mixed and/or operators', () => {
-      // A and B or C — mixed operators, too complex for Builder
-      expect(hasBuilderWarning(
-        'http.host eq "a.com" and http.request.method eq "POST" or ssl'
-      )).toBe(false);
     });
 
     it('skips expressions with function calls in comparisons', () => {
@@ -94,9 +105,21 @@ describe('Expression Builder Compatibility', () => {
         'any(http.request.headers["accept"][*] contains "text/html")'
       )).toBe(false);
     });
+
+    it('skips and-chain with function calls', () => {
+      expect(hasBuilderWarning(
+        'starts_with(http.request.uri.path, "/admin") and http.host eq "test.com"'
+      )).toBe(false);
+    });
+
+    it('skips or-branch containing function call', () => {
+      expect(hasBuilderWarning(
+        '(http.host eq "test.com") or starts_with(http.request.uri.path, "/admin")'
+      )).toBe(false);
+    });
   });
 
-  // ── Severity ───────────────────────────────────────────────────────
+  // ── Severity and context ───────────────────────────────────────────
 
   describe('diagnostic properties', () => {
     it('is info severity', () => {
@@ -111,6 +134,14 @@ describe('Expression Builder Compatibility', () => {
 
     it('only applies to filter expressions', () => {
       const result = validate('concat("/m", http.request.uri.path)', { expressionType: 'rewrite_url' });
+      expect(result.diagnostics.some(d => d.code === 'builder-incompatible')).toBe(false);
+    });
+
+    it('skips account-level expressions', () => {
+      const result = validate('(http.host eq "test.com") and (cf.zone.plan eq "ENT")', {
+        expressionType: 'filter',
+        accountLevel: true,
+      });
       expect(result.diagnostics.some(d => d.code === 'builder-incompatible')).toBe(false);
     });
   });
