@@ -30,6 +30,15 @@ const MAX_EXPRESSION_LENGTH = 4096;
 export function validate(expression: string, context: ValidationContext): LintResult {
   const diagnostics: Diagnostic[] = [];
 
+  // Check for leading/trailing whitespace
+  if (expression !== expression.trim()) {
+    diagnostics.push({
+      severity: 'warning',
+      message: 'Expression has leading or trailing whitespace which may be unintentional',
+      code: 'expression-whitespace',
+    });
+  }
+
   // Check expression length
   if (expression.length > MAX_EXPRESSION_LENGTH) {
     diagnostics.push({
