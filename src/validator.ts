@@ -642,8 +642,8 @@ function isUnwrappedAnd(node: ASTNode): boolean {
  *   - Single comparison: `(A)` — wrapped
  *
  * Only flags expressions that ARE simple enough for the Builder but aren't
- * formatted correctly. Complex expressions (functions, not, xor, nested
- * or-inside-and) are silently skipped.
+ * formatted correctly. Complex expressions (functions, xor, nested
+ * or-inside-and) are silently skipped. `not` is Builder-compatible.
  */
 function checkBuilderCompatibility(ast: ASTNode, diagnostics: Diagnostic[]): void {
   // Bare boolean literals — fine
@@ -749,7 +749,17 @@ function checkBuilderCompatibility(ast: ASTNode, diagnostics: Diagnostic[]): voi
     return;
   }
 
-  // Everything else (Not, FunctionCall, etc.) — not Builder-compatible, skip
+  // Top-level Not wrapping a simple expression — needs wrapping: (not field op value)
+  if (ast.kind === 'Not' && isSimpleChain(ast)) {
+    diagnostics.push({
+      severity: 'info',
+      message: 'Wrap in parentheses for Expression Builder compatibility: (not field op value)',
+      code: 'builder-incompatible',
+    });
+    return;
+  }
+
+  // Everything else (FunctionCall, etc.) — not Builder-compatible, skip
 }
 
 /** Check if a logical chain uses only `and`/`&&` */

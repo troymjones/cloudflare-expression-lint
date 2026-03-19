@@ -260,10 +260,13 @@ function walkYaml(
       if (exprInfo && typeof value === 'string') {
         const exprStr = value.trim();
         if (exprStr) {
-          // Account-level check only applies to top-level ruleset expressions,
-          // not to child rules within a ruleset (they inherit the plan filter
-          // from their parent). Detect by checking if 'rules' appears in the path.
-          const isTopLevelRulesetExpr = isAccountLevel && !keyPath.some(p => p === 'rules');
+          // Account-level check applies to top-level ruleset expressions and
+          // managed_waf_rules expressions. Child rules within waf_rules or
+          // http_ratelimits rulesets inherit the plan filter from their parent
+          // and should NOT be checked. Detect child rules by looking for a
+          // parent that has both a 'rules' array and its own 'expression'.
+          const isChildRule = isAccountLevel && isNestedChildRule(keyPath);
+          const isTopLevelRulesetExpr = isAccountLevel && !isChildRule;
 
           results.push({
             file: filePath,
@@ -300,4 +303,33 @@ function walkYaml(
       walkYaml(node[i], [...path, `${i}`], results, filePath, inferredPhase, isAccountLevel, expressionKeys, phaseMappings);
     }
   }
+}
+
+/**
+ * Detect if a YAML path represents a child rule nested inside a parent
+ * ruleset that has its own expression (i.e., the child inherits the
+ * parent's zone plan filter).
+ *
+ * Pattern: `*.waf_rules.N.rules.N.expression` — child inherits from
+ * `*.waf_rules.N.expression`
+ *
+ * NOT a child: `*.managed_waf_rules.rules.N.expression` — each rule
+ * has its own zone plan filter, no parent expression to inherit from.
+ */
+function isNestedChildRule(keyPath: string[]): boolean {
+  // Find the last occurrence of 'rules' in the path
+  for (let i = keyPath.length - 1; i >= 0; i--) {
+    if (keyPath[i] === 'rules') {
+      // Check if there's a named parent key (not a number) two levels up
+      // Pattern: parentKey.N.rules.N.expression
+      // The parent key (e.g., 'waf_rules') should be at i-2
+      if (i >= 2 && /^\d+$/.test(keyPath[i - 1])) {
+        // This is waf_rules.0.rules.0.expression pattern — IS a child
+        return true;
+      }
+      // Otherwise it's managed_waf_rules.rules.0.expression — NOT a child
+      return false;
+    }
+  }
+  return false;
 }

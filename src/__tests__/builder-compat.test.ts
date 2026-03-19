@@ -92,9 +92,9 @@ describe('Expression Builder Compatibility', () => {
       expect(hasBuilderWarning('starts_with(http.request.uri.path, "/admin")')).toBe(false);
     });
 
-    it('skips bare not at top level', () => {
-      // Top-level not without wrapping — skip since it's ambiguous
-      expect(hasBuilderWarning('not ssl')).toBe(false);
+    it('flags bare not at top level', () => {
+      // Top-level not needs wrapping: (not ssl)
+      expect(hasBuilderWarning('not ssl')).toBe(true);
     });
 
     it('skips expressions with function calls in comparisons', () => {
@@ -187,8 +187,8 @@ describe('Expression Builder Compatibility', () => {
       )).toBe(true);
     });
 
-    it('skips not at top level', () => {
-      expect(hasBuilderWarning('not http.host eq "test"')).toBe(false);
+    it('flags not at top level needing wrapping', () => {
+      expect(hasBuilderWarning('not http.host eq "test"')).toBe(true);
     });
 
     it('accepts not in and-chain inside group', () => {
