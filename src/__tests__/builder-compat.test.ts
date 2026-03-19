@@ -187,6 +187,13 @@ describe('Expression Builder Compatibility', () => {
       )).toBe(true);
     });
 
+    it('flags or-chain inside outer parens even when branches are wrapped', () => {
+      // ( (A) or (B) or (C) ) — branches are wrapped but outer group must be removed
+      expect(hasBuilderWarning(
+        '( (http.host contains "www-qa") or (http.host contains "www-stage") or (http.host wildcard "partner-api*"))'
+      )).toBe(true);
+    });
+
     it('flags not at top level needing wrapping', () => {
       expect(hasBuilderWarning('not http.host eq "test"')).toBe(true);
     });

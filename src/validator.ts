@@ -683,7 +683,17 @@ function checkBuilderCompatibility(ast: ASTNode, diagnostics: Diagnostic[]): voi
     if (inner.kind === 'Comparison' || inner.kind === 'InExpression') return;
     // (A and B and C) — all-and inside one group, already good
     if (inner.kind === 'Logical' && isAllAnd(inner) && isSimpleChain(inner)) return;
-    // (or-chain) — check the or-chain inside
+    // (or-chain inside group) — the outer group must be REMOVED for Builder compat
+    // Builder format is (A) or (B), NOT ((A) or (B))
+    if (inner.kind === 'Logical' && isAllOr(inner)) {
+      diagnostics.push({
+        severity: 'info',
+        message: 'Remove outer parentheses from or-chain for Expression Builder compatibility. Use (A) or (B) instead of ((A) or (B)).',
+        code: 'builder-incompatible',
+      });
+      return;
+    }
+    // Other logical inside group — check recursively
     if (inner.kind === 'Logical') {
       checkBuilderCompatibility(inner, diagnostics);
       return;
