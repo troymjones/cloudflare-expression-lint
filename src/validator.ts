@@ -19,7 +19,7 @@ import { findComparisonOperator } from './schemas/operators.js';
 import type { FieldType } from './schemas/operators.js';
 import type {
   ASTNode, Diagnostic, DiagnosticSeverity,
-  ValidationContext, LintResult, ExpressionType,
+  ValidationContext, LintResult, ExpressionType, OperatorStyle,
 } from './types.js';
 
 const MAX_EXPRESSION_LENGTH = 4096;
@@ -100,8 +100,11 @@ export function validate(expression: string, context: ValidationContext): LintRe
     checkAmbiguousPrecedence(ast, diagnostics);
   }
 
-  // Check for C-like operator style (suggest English notation)
-  checkOperatorStyle(ast, diagnostics);
+  // Check operator style (configurable: 'english', 'clike', or 'off')
+  const operatorStyle = context.operatorStyle ?? 'english';
+  if (operatorStyle !== 'off') {
+    checkOperatorStyle(ast, diagnostics, operatorStyle);
+  }
 
   // Check Expression Builder compatibility for simple expressions
   if (context.expressionType === 'filter') {
@@ -533,8 +536,8 @@ class ASTWalker {
  * Check for C-like operator notation and suggest English notation.
  * The Expression Builder only generates English notation (eq, ne, and, or).
  */
-function checkOperatorStyle(ast: ASTNode, diagnostics: Diagnostic[]): void {
-  walkForOperatorStyle(ast, diagnostics, new Set());
+function checkOperatorStyle(ast: ASTNode, diagnostics: Diagnostic[], style: 'english' | 'clike'): void {
+  walkForOperatorStyle(ast, diagnostics, new Set(), style);
 }
 
 const CLIKE_TO_ENGLISH: Record<string, string> = {
@@ -542,41 +545,38 @@ const CLIKE_TO_ENGLISH: Record<string, string> = {
   '~': 'matches', '&&': 'and', '||': 'or', '!': 'not', '^^': 'xor',
 };
 
-function walkForOperatorStyle(node: ASTNode, diagnostics: Diagnostic[], reported: Set<string>): void {
-  if (node.kind === 'Comparison') {
-    const english = CLIKE_TO_ENGLISH[node.operator];
-    if (english && !reported.has(node.operator)) {
+const ENGLISH_TO_CLIKE: Record<string, string> = {
+  'eq': '==', 'ne': '!=', 'lt': '<', 'le': '<=', 'gt': '>', 'ge': '>=',
+  'matches': '~', 'and': '&&', 'or': '||', 'not': '!', 'xor': '^^',
+};
+
+function walkForOperatorStyle(
+  node: ASTNode, diagnostics: Diagnostic[], reported: Set<string>, style: 'english' | 'clike',
+): void {
+  if (node.kind === 'Comparison' || node.kind === 'Logical') {
+    const flagMap = style === 'english' ? CLIKE_TO_ENGLISH : ENGLISH_TO_CLIKE;
+    const code = style === 'english' ? 'prefer-english-operator' : 'prefer-clike-operator';
+    const preferred = flagMap[node.operator];
+    if (preferred && !reported.has(node.operator)) {
       reported.add(node.operator);
+      const label = style === 'english' ? 'English' : 'C-like';
       diagnostics.push({
         severity: 'info',
-        message: `Use English notation "${english}" instead of "${node.operator}" for consistency with Expression Builder`,
-        code: 'prefer-english-operator',
+        message: `Use ${label} notation "${preferred}" instead of "${node.operator}"`,
+        code,
         position: node.position,
       });
     }
-    walkForOperatorStyle(node.left, diagnostics, reported);
-    walkForOperatorStyle(node.right, diagnostics, reported);
-  } else if (node.kind === 'Logical') {
-    const english = CLIKE_TO_ENGLISH[node.operator];
-    if (english && !reported.has(node.operator)) {
-      reported.add(node.operator);
-      diagnostics.push({
-        severity: 'info',
-        message: `Use English notation "${english}" instead of "${node.operator}" for consistency with Expression Builder`,
-        code: 'prefer-english-operator',
-        position: node.position,
-      });
-    }
-    walkForOperatorStyle(node.left, diagnostics, reported);
-    walkForOperatorStyle(node.right, diagnostics, reported);
+    if ('left' in node) walkForOperatorStyle(node.left, diagnostics, reported, style);
+    if ('right' in node) walkForOperatorStyle(node.right, diagnostics, reported, style);
   } else if (node.kind === 'Group') {
-    walkForOperatorStyle(node.expression, diagnostics, reported);
+    walkForOperatorStyle(node.expression, diagnostics, reported, style);
   } else if (node.kind === 'Not') {
-    walkForOperatorStyle(node.operand, diagnostics, reported);
+    walkForOperatorStyle(node.operand, diagnostics, reported, style);
   } else if (node.kind === 'InExpression') {
-    walkForOperatorStyle(node.field, diagnostics, reported);
+    walkForOperatorStyle(node.field, diagnostics, reported, style);
   } else if (node.kind === 'FunctionCall') {
-    for (const arg of node.args) walkForOperatorStyle(arg, diagnostics, reported);
+    for (const arg of node.args) walkForOperatorStyle(arg, diagnostics, reported, style);
   }
 }
 

@@ -13,7 +13,7 @@
 
 import { parse as parseYaml } from 'yaml';
 import { validate } from './validator.js';
-import type { ValidationContext, LintResult, ExpressionType } from './types.js';
+import type { ValidationContext, LintResult, ExpressionType, OperatorStyle } from './types.js';
 
 // ── Public Types ─────────────────────────────────────────────────────
 
@@ -97,6 +97,16 @@ export interface ScannerOptions {
    * Example: ["config/account/"] — matches any YAML file under config/account/
    */
   accountLevelPaths?: string[];
+
+  /**
+   * Operator style preference for diagnostics.
+   * - `'english'` — flag C-like operators and suggest English notation
+   * - `'clike'`   — flag English operators and suggest C-like notation
+   * - `'off'`     — disable operator style checking entirely
+   *
+   * Default: `'english'`
+   */
+  operatorStyle?: OperatorStyle;
 }
 
 // ── Built-in Defaults ────────────────────────────────────────────────
@@ -186,6 +196,7 @@ export function scanYaml(
       phase: loc.phase,
       allowPlaceholders: true,
       accountLevel: loc.accountLevel,
+      operatorStyle: options?.operatorStyle,
     };
     const result = validate(loc.expression, ctx);
     return { ...loc, result };

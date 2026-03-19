@@ -17,7 +17,7 @@ export type {
   FunctionCallNode, ComparisonNode, LogicalNode, NotNode,
   InExpressionNode, GroupNode, ArrayUnpackNode,
   Diagnostic, DiagnosticSeverity,
-  ValidationContext, ExpressionType, LintResult,
+  ValidationContext, ExpressionType, OperatorStyle, LintResult,
 } from './types.js';
 
 // Re-export schema types for consumers who want to extend

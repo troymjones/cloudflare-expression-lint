@@ -27,7 +27,7 @@ A TypeScript parser, validator, and linter for Cloudflare Rules Language express
 - `src/schemas/fields.ts` — Field registry (211+ fields with types, deprecation, phase availability, load balancing and DNS fields)
 - `src/schemas/functions.ts` — Function registry (25+ functions with context restrictions, including hash_in_range)
 - `src/schemas/operators.ts` — Operator definitions with type constraints
-- `src/__tests__/` — Test suite (399 tests across 13 files)
+- `src/__tests__/` — Test suite (409 tests across 13 files)
 - `scripts/sync-cloudflare-docs.ts` — Automated sync from cloudflare-docs repo (fields + functions)
 
 ## Commands
@@ -81,7 +81,8 @@ Custom mappings always merge with built-in defaults.
   "expressionKeys": { "my_key": { "type": "filter", "phaseHint": "http_request_firewall_custom" } },
   "phaseMappings": { "my_waf_rules": "http_request_firewall_custom" },
   "ignoreCodes": ["contains-placeholders", "parse-error-placeholder"],
-  "accountLevelPaths": ["config/account/"]
+  "accountLevelPaths": ["config/account/"],
+  "operatorStyle": "off"
 }
 ```
 
@@ -104,6 +105,7 @@ The CLI supports exit codes for CI pipelines:
 - `--warn-exit-code 2` — exit 2 on warnings (use with GitLab `allow_failure: exit_codes: [2]`)
 - `--quiet` — only show errors
 - `--ignore-code <code>` — suppress specific diagnostic codes
+- `--operator-style <english|clike|off>` — operator style preference (default: english)
 
 ## Key Design Decisions
 - Schemas are data, not code — field/function definitions are in simple arrays

@@ -183,6 +183,16 @@ export interface Diagnostic {
 
 export type ExpressionType = 'filter' | 'rewrite_url' | 'rewrite_header' | 'redirect_target';
 
+/**
+ * Controls operator style checking.
+ * - `'english'` — flag C-like operators (==, !=, etc.) and suggest English (eq, ne, etc.)
+ * - `'clike'`   — flag English operators and suggest C-like notation
+ * - `'off'`     — disable operator style checking entirely
+ *
+ * Default: `'english'`
+ */
+export type OperatorStyle = 'english' | 'clike' | 'off';
+
 export interface ValidationContext {
   /** The Cloudflare phase (e.g., "http_request_firewall_custom") */
   phase?: string;
@@ -193,6 +203,8 @@ export interface ValidationContext {
   /** If true, this is an account-level expression that must end with
    *  `and (cf.zone.plan eq "ENT")`. */
   accountLevel?: boolean;
+  /** Operator style preference. Default: 'english'. */
+  operatorStyle?: OperatorStyle;
 }
 
 // ── Lint Result ────────────────────────────────────────────────────────

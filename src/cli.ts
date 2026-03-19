@@ -27,7 +27,7 @@ import { glob } from 'glob';
 import { validate } from './validator.js';
 import { scanYaml } from './yaml-scanner.js';
 import type { ScannerOptions, ExpressionKeyMapping } from './yaml-scanner.js';
-import type { ValidationContext, ExpressionType, Diagnostic } from './types.js';
+import type { ValidationContext, ExpressionType, OperatorStyle, Diagnostic } from './types.js';
 
 interface CLIOptions {
   files: string[];
@@ -42,6 +42,7 @@ interface CLIOptions {
   quiet: boolean;
   warnExitCode: number;
   ignoreCodes: string[];
+  operatorStyle: OperatorStyle;
   help: boolean;
 }
 
@@ -56,6 +57,7 @@ function parseArgs(argv: string[]): CLIOptions {
     quiet: false,
     warnExitCode: 0,
     ignoreCodes: [],
+    operatorStyle: 'english',
     help: false,
   };
 
@@ -125,6 +127,9 @@ function parseArgs(argv: string[]): CLIOptions {
       case '--ignore-code':
         opts.ignoreCodes.push(argv[++i]);
         break;
+      case '--operator-style':
+        opts.operatorStyle = argv[++i] as OperatorStyle;
+        break;
       default:
         if (!arg.startsWith('-')) {
           opts.files.push(arg);
@@ -154,6 +159,7 @@ function buildScannerOptions(opts: CLIOptions): ScannerOptions | undefined {
         phaseMappings?: Record<string, string>;
         ignoreCodes?: string[];
         accountLevelPaths?: string[];
+        operatorStyle?: OperatorStyle;
       };
       if (config.expressionKeys) {
         scannerOpts.expressionKeys = config.expressionKeys;
@@ -169,6 +175,9 @@ function buildScannerOptions(opts: CLIOptions): ScannerOptions | undefined {
       if (config.accountLevelPaths) {
         scannerOpts.accountLevelPaths = config.accountLevelPaths;
         hasOptions = true;
+      }
+      if (config.operatorStyle) {
+        opts.operatorStyle = config.operatorStyle;
       }
     } catch (err) {
       console.error(`Error reading config file ${configPath}: ${err instanceof Error ? err.message : err}`);
@@ -194,6 +203,12 @@ function buildScannerOptions(opts: CLIOptions): ScannerOptions | undefined {
     for (const pm of opts.phaseMaps) {
       scannerOpts.phaseMappings[pm.yamlKey] = pm.phase;
     }
+    hasOptions = true;
+  }
+
+  // Pass operator style to scanner
+  if (opts.operatorStyle !== 'english') {
+    scannerOpts.operatorStyle = opts.operatorStyle;
     hasOptions = true;
   }
 
@@ -243,6 +258,8 @@ Options:
                              (default: 0). Use 2 for CI warning status.
   --ignore-code <code>       Suppress a diagnostic code (repeatable).
                              Also configurable via "ignoreCodes" in config file.
+  --operator-style <style>   Operator style: english (default), clike, off.
+                             Also configurable via "operatorStyle" in config file.
   --help, -h                 Show this help
 
 Config File:
@@ -324,6 +341,7 @@ async function main(): Promise<void> {
     const ctx: ValidationContext = {
       expressionType: opts.type,
       phase: opts.phase,
+      operatorStyle: opts.operatorStyle,
     };
 
     const result = validate(expr, ctx);
