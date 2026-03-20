@@ -27,7 +27,7 @@ A TypeScript parser, validator, and linter for Cloudflare Rules Language express
 - `src/schemas/fields.ts` — Field registry (211+ fields with types, deprecation, phase availability, load balancing and DNS fields)
 - `src/schemas/functions.ts` — Function registry (25+ functions with context restrictions, including hash_in_range)
 - `src/schemas/operators.ts` — Operator definitions with type constraints
-- `src/__tests__/` — Test suite (409 tests across 13 files)
+- `src/__tests__/` — Test suite (418 tests across 13 files)
 - `scripts/sync-cloudflare-docs.ts` — Automated sync from cloudflare-docs repo (fields + functions)
 
 ## Commands
@@ -94,11 +94,19 @@ Custom mappings always merge with built-in defaults.
 
 ## Cloudflare Expression Builder Format
 The Builder requires:
-- Single comparison: `(field op value)`
-- All-and: `(A and B and C)` — one wrapping group
-- Or-branches: `(A and B) or (C and D) or (E)` — each or-branch wrapped
-- `not` is supported on individual comparisons within groups
-- Functions, regex (`matches`), and nested or-inside-and are NOT Builder-compatible
+- Single group: `(cond [and cond ...])` — conditions joined by `and` inside one `()`
+- Or-chain: `(group) or (group) or ...` — groups joined by `or` at top level
+- `not` is a toggle on individual conditions INSIDE groups: `(not A and not B)`
+- Each condition: comparison, in-expression, or boolean field
+
+NOT Builder-compatible (with suggested rewrites):
+- `(A) and (B)` → merge: `(A and B)`
+- `(A or B)` → split: `(A) or (B)`
+- `not (A)` → move not inside: `(not A)`
+- `not (A or B)` → De Morgan's: `(not A and not B)`
+- `((A) or (B))` → remove outer parens: `(A) or (B)`
+- `((A or B) and C)` → distribute: `(A and C) or (B and C)`
+- Functions/array unpacks are silently skipped (no Builder fix possible)
 
 ## CI Integration
 The CLI supports exit codes for CI pipelines:
