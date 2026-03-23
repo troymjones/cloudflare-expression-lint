@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { formatExpression } from '../formatter.js';
+import { parse } from '../parser.js';
 
 describe('Expression Formatter', () => {
   describe('short expressions — no change', () => {
@@ -16,6 +17,17 @@ describe('Expression Formatter', () => {
     it('leaves bare true alone', () => {
       expect(formatExpression('true')).toBe('true');
     });
+
+    it('leaves short and-chain alone', () => {
+      expect(formatExpression('(http.host eq "a.com" and ip.src.country eq "US")')).toBe(
+        '(http.host eq "a.com" and ip.src.country eq "US")'
+      );
+    });
+
+    it('leaves expression exactly at maxWidth alone', () => {
+      const expr = '(http.host eq "test.com")';
+      expect(formatExpression(expr, { maxWidth: expr.length })).toBe(expr);
+    });
   });
 
   describe('long or-chains — breaks per branch', () => {
@@ -24,9 +36,15 @@ describe('Expression Formatter', () => {
       const result = formatExpression(expr, { maxWidth: 80 });
       const lines = result.split('\n');
       expect(lines.length).toBeGreaterThan(1);
-      // First line starts with opening paren, subsequent lines start with 'or'
       expect(lines[0]).toMatch(/^\(http/);
       expect(lines[1]).toMatch(/^or \(/);
+    });
+
+    it('each or-branch is on its own line', () => {
+      const expr = '(ip.src.country eq "AL") or (ip.src.country eq "US") or (ip.src.country eq "GB") or (ip.src.country eq "DE") or (ip.src.country eq "FR")';
+      const result = formatExpression(expr, { maxWidth: 60 });
+      const orCount = (result.match(/\nor /g) || []).length;
+      expect(orCount).toBe(4); // 5 branches = 4 'or' joins
     });
   });
 
@@ -37,9 +55,14 @@ describe('Expression Formatter', () => {
       const lines = result.split('\n');
       expect(lines.length).toBeGreaterThan(1);
       expect(lines[0]).toMatch(/^\(/);
-      // First condition indented, subsequent lines start with indented 'and'
       expect(lines[1]).toMatch(/^\s+http\.host/);
       expect(lines[2]).toMatch(/^\s+and /);
+    });
+
+    it('breaks bare and-chain (no wrapping group)', () => {
+      const expr = 'http.host eq "secure.example.com" and http.request.method eq "POST" and http.request.uri.path eq "/api/v1/webhook"';
+      const result = formatExpression(expr, { maxWidth: 60 });
+      expect(result).toContain('\nand ');
     });
   });
 
@@ -49,17 +72,50 @@ describe('Expression Formatter', () => {
       const result = formatExpression(expr, { maxWidth: 80 });
       const lines = result.split('\n');
       expect(lines.length).toBeGreaterThan(1);
-      // Should have 'or' at the start of some lines
       expect(result).toContain('\nor ');
+    });
+
+    it('handles nested or inside and group', () => {
+      const expr = '((http.host eq "a.example.com" or http.host eq "b.example.com") and http.request.uri.path eq "/api" and not ip.src in $blocklist)';
+      const result = formatExpression(expr, { maxWidth: 80 });
+      expect(result).toContain('http.host eq "a.example.com"');
+      expect(result).toContain('http.request.uri.path eq "/api"');
+    });
+  });
+
+  describe('operator normalization', () => {
+    it('normalizes && to and', () => {
+      const expr = '(http.host eq "a.com") && (http.host eq "b.com") && (http.host eq "c.com") && (http.host eq "d.com") && (http.host eq "e.com")';
+      const result = formatExpression(expr, { maxWidth: 60 });
+      expect(result).toContain('and');
+      expect(result).not.toContain('&&');
+    });
+
+    it('normalizes || to or', () => {
+      const expr = '(http.host eq "a.com") || (http.host eq "b.com") || (http.host eq "c.com") || (http.host eq "d.com") || (http.host eq "e.com")';
+      const result = formatExpression(expr, { maxWidth: 60 });
+      expect(result).toContain('or');
+      expect(result).not.toContain('||');
     });
   });
 
   describe('preserves semantics', () => {
-    it('formatted expression parses identically', () => {
+    it('formatted expression parses without error', () => {
       const expr = '(http.host eq "test.com" and http.request.method eq "POST") or (ip.src in {192.0.2.0/24 198.51.100.0/24} and not cf.bot_management.verified_bot)';
       const formatted = formatExpression(expr, { maxWidth: 60 });
-      // Both should be parseable (we can't easily compare ASTs, but verify no errors)
+      // The formatted version should still parse
+      // (collapsed back to one line by joining with spaces)
+      const collapsed = formatted.replace(/\n\s*/g, ' ').trim();
+      expect(() => parse(collapsed)).not.toThrow();
+    });
+
+    it('preserves all fields and values', () => {
+      const expr = '(http.host eq "test.com" and http.request.method eq "POST") or (ip.src in {192.0.2.0/24 198.51.100.0/24} and not cf.bot_management.verified_bot)';
+      const formatted = formatExpression(expr, { maxWidth: 60 });
       expect(formatted).toContain('http.host eq "test.com"');
+      expect(formatted).toContain('http.request.method eq "POST"');
+      expect(formatted).toContain('192.0.2.0/24');
+      expect(formatted).toContain('198.51.100.0/24');
       expect(formatted).toContain('cf.bot_management.verified_bot');
     });
   });
@@ -72,14 +128,94 @@ describe('Expression Formatter', () => {
         expect(result).toContain('ip.src in {');
       }
     });
+
+    it('keeps short in-list on one line', () => {
+      const expr = '(ip.src in {192.0.2.1 198.51.100.1})';
+      const result = formatExpression(expr, { maxWidth: 120 });
+      expect(result).not.toContain('\n');
+    });
+
+    it('handles named list without braces', () => {
+      const result = formatExpression('(ip.src in $allowlist)');
+      expect(result).toBe('(ip.src in $allowlist)');
+      expect(result).not.toContain('{');
+    });
+
+    it('handles negated in-expression', () => {
+      const result = formatExpression('(not ip.src in $blocklist)');
+      expect(result).toBe('(not ip.src in $blocklist)');
+    });
+  });
+
+  describe('not expressions', () => {
+    it('formats not at top of and-chain', () => {
+      const expr = '(not http.cookie contains "session" and not http.cookie contains "token" and http.request.uri.path eq "/login" and http.request.method eq "GET")';
+      const result = formatExpression(expr, { maxWidth: 60 });
+      expect(result).toContain('not http.cookie contains "session"');
+      expect(result).toContain('not http.cookie contains "token"');
+    });
+
+    it('formats not in or-branches', () => {
+      const expr = '(not http.cookie contains "a") or (not http.cookie contains "b") or (not http.cookie contains "c") or (not http.cookie contains "d")';
+      const result = formatExpression(expr, { maxWidth: 60 });
+      const orCount = (result.match(/\nor /g) || []).length;
+      expect(orCount).toBe(3);
+    });
+  });
+
+  describe('function calls', () => {
+    it('formats starts_with in or-chain', () => {
+      const expr = '(starts_with(http.request.uri.path, "/api/v1/")) or (starts_with(http.request.uri.path, "/api/v2/")) or (starts_with(http.request.uri.path, "/api/v3/"))';
+      const result = formatExpression(expr, { maxWidth: 60 });
+      expect(result).toContain('starts_with');
+      expect(result).toContain('\nor ');
+    });
+
+    it('formats starts_with in and-group', () => {
+      const expr = '(starts_with(http.request.uri.path, "/api/v1/long-path-name/") and http.host eq "api.example.com" and http.request.method eq "POST")';
+      const result = formatExpression(expr, { maxWidth: 80 });
+      expect(result).toContain('starts_with');
+    });
+
+    it('preserves raw strings', () => {
+      const expr = '(http.user_agent matches r"Mozilla\\/5\\.0.*Chrome\\/1[0-9][0-9]" and http.host eq "test.com" and ip.src.country eq "US")';
+      const result = formatExpression(expr, { maxWidth: 80 });
+      expect(result).toContain('matches');
+      expect(result).toContain('http.host eq "test.com"');
+    });
+  });
+
+  describe('real-world expressions', () => {
+    it('formats a complex WAF skip rule', () => {
+      const expr = '(((http.host eq "employers.example.com") or (http.host eq "apply.example.com") or (http.host eq "apis.example.com")) and ((http.request.uri.path matches "^/api") or (http.request.uri.path matches "^/graphql") or (http.request.uri.path matches "^/rpc/")))';
+      const result = formatExpression(expr, { maxWidth: 80 });
+      expect(result).toContain('employers.example.com');
+      expect(result).toContain('apis.example.com');
+      expect(result).toContain('/graphql');
+    });
+
+    it('formats a rate limit expression', () => {
+      const expr = '(starts_with(http.request.uri.path, "/integrations/api/v1/time/flex/flex_uk/worker/") and http.host eq "pay.example.com") or (starts_with(http.request.uri.path, "/integrations/api/v1/time/flex/flex_us/worker/") and http.host eq "pay.example.com")';
+      const result = formatExpression(expr, { maxWidth: 100 });
+      expect(result).toContain('flex_uk');
+      expect(result).toContain('flex_us');
+      expect(result).toContain('\nor ');
+    });
+
+    it('formats a bot score expression', () => {
+      const expr = '(cf.bot_management.score gt 1 and cf.bot_management.score le 5 and not cf.bot_management.verified_bot and not http.request.uri.path contains "log" and not http.request.uri.path contains "/static")';
+      const result = formatExpression(expr, { maxWidth: 80 });
+      const lines = result.split('\n');
+      expect(lines.length).toBeGreaterThan(1);
+      expect(result).toContain('cf.bot_management.score gt 1');
+      expect(result).toContain('cf.bot_management.score le 5');
+    });
   });
 
   describe('options', () => {
     it('respects custom maxWidth', () => {
       const expr = '(http.host eq "test.com") or (http.host eq "other.com")';
-      // With wide max, stays on one line
       expect(formatExpression(expr, { maxWidth: 200 })).not.toContain('\n');
-      // With narrow max, breaks
       expect(formatExpression(expr, { maxWidth: 40 })).toContain('\n');
     });
 
@@ -87,9 +223,16 @@ describe('Expression Formatter', () => {
       const expr = '(http.host eq "secure.example.com" and http.request.method eq "POST" and http.request.uri.path eq "/api/v1/webhook")';
       const result = formatExpression(expr, { maxWidth: 60, indent: '    ' });
       if (result.includes('\n')) {
-        // Should use 4-space indent
         expect(result).toMatch(/\n {4}and /);
       }
+    });
+
+    it('one-character-over maxWidth triggers breaking', () => {
+      const expr = '(http.host eq "test.com") or (http.host eq "other.com")';
+      const oneLine = formatExpression(expr, { maxWidth: 200 });
+      // Set maxWidth to one less than the single-line length
+      const result = formatExpression(expr, { maxWidth: oneLine.length - 1 });
+      expect(result).toContain('\n');
     });
   });
 
@@ -106,23 +249,27 @@ describe('Expression Formatter', () => {
       expect(formatExpression('  (http.host eq "test.com")  ')).toBe('(http.host eq "test.com")');
     });
 
-    it('handles not expressions', () => {
-      const expr = '(not http.cookie contains "session" and not http.cookie contains "token" and http.request.uri.path eq "/login")';
-      const result = formatExpression(expr, { maxWidth: 60 });
-      expect(result).toContain('not http.cookie');
+    it('handles single field', () => {
+      expect(formatExpression('ssl')).toBe('ssl');
     });
 
-    it('handles function calls', () => {
-      const expr = '(starts_with(http.request.uri.path, "/api/v1/") and http.host eq "test.com") or (starts_with(http.request.uri.path, "/api/v2/") and http.host eq "test.com")';
-      const result = formatExpression(expr, { maxWidth: 80 });
-      expect(result).toContain('starts_with');
+    it('handles single wrapped field', () => {
+      expect(formatExpression('(ssl)')).toBe('(ssl)');
     });
 
-    it('handles named lists', () => {
-      const expr = '(ip.src in $allowlist and not ip.src in $blocklist and http.host eq "test.com")';
-      const result = formatExpression(expr, { maxWidth: 60 });
-      expect(result).toContain('$allowlist');
-      expect(result).toContain('$blocklist');
+    it('handles map key access', () => {
+      const result = formatExpression('(http.request.headers["host"] eq "test.com")');
+      expect(result).toContain('http.request.headers["host"]');
+    });
+
+    it('handles IP with CIDR', () => {
+      const result = formatExpression('(ip.src in {192.0.2.0/24})');
+      expect(result).toContain('192.0.2.0/24');
+    });
+
+    it('handles string escaping', () => {
+      const result = formatExpression('(http.request.uri.path eq "/path with \\"quotes\\"")');
+      expect(result).toContain('"');
     });
   });
 });
