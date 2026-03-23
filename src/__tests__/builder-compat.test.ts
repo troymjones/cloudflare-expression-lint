@@ -209,6 +209,24 @@ describe('Expression Builder Compatibility', () => {
       )).toBe(true);
     });
 
+    it('((A) and (B) and (C)) — individually-wrapped conditions in and-group', () => {
+      expect(hasBuilderWarning(
+        '((http.user_agent contains "GoogleBot") and (ip.src.asnum eq 15169) and (http.request.uri.path contains "/.well-known/"))'
+      )).toBe(true);
+    });
+
+    it('or-branch with individually-wrapped and-conditions', () => {
+      expect(hasBuilderWarning(
+        '(http.request.uri.path eq "/a") or ((http.user_agent contains "Bot") and (ip.src.asnum eq 15169) and (http.request.uri.path contains "/b"))'
+      )).toBe(true);
+    });
+
+    it('((A) and (B)) — two wrapped conditions in and-group', () => {
+      expect(hasBuilderWarning(
+        '((http.host eq "test.com") and (http.request.method eq "POST"))'
+      )).toBe(true);
+    });
+
     it('bare unwrapped single comparison', () => {
       expect(hasBuilderWarning('http.host eq "test.com"')).toBe(true);
     });

@@ -901,16 +901,12 @@ function isBuilderCondition(node: ASTNode): boolean {
 }
 
 /** Check if a node is a valid condition for inside an and-group
- *  (a condition, or `not` prefixed condition) */
+ *  (a condition, or `not` prefixed condition).
+ *  Conditions must be BARE — not wrapped in their own group.
+ *  Builder accepts `(A and B and C)` but NOT `((A) and (B) and (C))`. */
 function isBuilderAndLeaf(node: ASTNode): boolean {
   if (isBuilderCondition(node)) return true;
   if (node.kind === 'Not') return isBuilderCondition(node.operand);
-  // A Group wrapping a simple condition — (A) — treat as valid leaf
-  if (node.kind === 'Group') {
-    const inner = node.expression;
-    if (isBuilderCondition(inner)) return true;
-    if (inner.kind === 'Not' && isBuilderCondition(inner.operand)) return true;
-  }
   return false;
 }
 
