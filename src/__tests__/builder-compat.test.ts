@@ -276,6 +276,42 @@ describe('Expression Builder Compatibility', () => {
       )).toBe(false);
     });
 
+    it('accepts (not starts_with(...)) — not toggle on function', () => {
+      expect(hasBuilderWarning('(not starts_with(http.request.uri.path, "/api"))')).toBe(false);
+    });
+
+    it('flags bare not starts_with(...) — needs wrapping', () => {
+      expect(hasBuilderWarning('not starts_with(http.request.uri.path, "/api")')).toBe(true);
+    });
+
+    it('accepts not starts_with in and-group', () => {
+      expect(hasBuilderWarning(
+        '(not starts_with(http.request.full_uri, "abc") and http.host eq "test.com")'
+      )).toBe(false);
+    });
+
+    it('accepts (not ends_with(...))', () => {
+      expect(hasBuilderWarning('(not ends_with(http.request.uri.path, ".js"))')).toBe(false);
+    });
+
+    it('accepts function calls in or-chain with and-groups', () => {
+      expect(hasBuilderWarning(
+        '(starts_with(http.request.uri.path, "/uk/") and http.host eq "pay.example.com") or (starts_with(http.request.uri.path, "/us/") and http.host eq "pay.example.com")'
+      )).toBe(false);
+    });
+
+    it('flags or-chain with unwrapped function calls', () => {
+      expect(hasBuilderWarning(
+        'starts_with(http.request.uri.path, "/a") or starts_with(http.request.uri.path, "/b")'
+      )).toBe(true);
+    });
+
+    it('flags outer-paren-wrapped or-chain of function calls', () => {
+      expect(hasBuilderWarning(
+        '(starts_with(http.request.uri.path, "/a") or starts_with(http.request.uri.path, "/b"))'
+      )).toBe(true);
+    });
+
     it('skips expressions with function LHS in comparison (lower(field) eq "x")', () => {
       expect(hasBuilderWarning('lower(http.host) eq "test.com"')).toBe(false);
     });
