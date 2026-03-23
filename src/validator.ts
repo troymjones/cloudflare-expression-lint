@@ -668,15 +668,17 @@ function isUnwrappedAnd(node: ASTNode): boolean {
  *   - Functions as left-hand side:            (len(field) gt 0)
  */
 function checkBuilderCompatibility(ast: ASTNode, diagnostics: Diagnostic[]): void {
-  // If the expression contains functions or array unpacks anywhere, it's
-  // inherently not Builder-compatible and there's no simple fix — skip silently.
-  if (containsFunctionOrUnpack(ast)) return;
+  // Skip if the expression contains non-Builder function patterns:
+  // comparisons where a function transforms the LHS (e.g., lower(field) eq "x")
+  // or array unpacks (e.g., any(headers[*] contains "x")).
+  // Top-level function calls like starts_with() ARE Builder-compatible.
+  if (containsNonBuilderFunction(ast)) return;
 
   // Bare boolean literals / fields — technically fine, nothing to flag
   if (ast.kind === 'BooleanLiteral' || ast.kind === 'FieldAccess') return;
 
-  // ── Bare comparison/in — needs wrapping ──────────────────────────
-  if (ast.kind === 'Comparison' || ast.kind === 'InExpression') {
+  // ── Bare comparison/in/function — needs wrapping ─────────────────
+  if (ast.kind === 'Comparison' || ast.kind === 'InExpression' || ast.kind === 'FunctionCall') {
     diagnostics.push({
       severity: 'info',
       message: 'Wrap in parentheses for Expression Builder compatibility: (field op value)',
@@ -856,24 +858,33 @@ function checkBuilderCompatibility(ast: ASTNode, diagnostics: Diagnostic[]): voi
 
 // ── Builder compatibility helpers ──────────────────────────────────
 
-/** Check if an AST contains any function calls or array unpacks anywhere.
- *  Expressions with these are inherently not Builder-compatible and
- *  we skip the check silently (no actionable fix). */
-function containsFunctionOrUnpack(node: ASTNode): boolean {
+/** Check if an AST contains function/unpack patterns that can't be in the Builder.
+ *  - Comparisons with function LHS: `lower(field) eq "x"` — NOT Builder-compatible
+ *  - Array unpacks: `any(headers[*] ...)` — NOT Builder-compatible
+ *  - Top-level function calls like `starts_with(field, val)` ARE Builder-compatible
+ *    (they appear as comparison operator options in the Builder UI) */
+function containsNonBuilderFunction(node: ASTNode): boolean {
   switch (node.kind) {
-    case 'FunctionCall':
     case 'ArrayUnpack':
       return true;
+    case 'FunctionCall':
+      // Top-level function calls (starts_with, ends_with, etc.) are Builder-compatible,
+      // but check args for array unpacks (e.g., any(headers[*] contains "x"))
+      return node.args.some(arg => containsNonBuilderFunction(arg));
     case 'Comparison':
-      return containsFunctionOrUnpack(node.left) || containsFunctionOrUnpack(node.right);
+      // Function as LHS of comparison (lower(field) eq "x") is NOT Builder-compatible
+      if (node.left.kind === 'FunctionCall' || node.left.kind === 'ArrayUnpack') return true;
+      return containsNonBuilderFunction(node.left) || containsNonBuilderFunction(node.right);
     case 'Logical':
-      return containsFunctionOrUnpack(node.left) || containsFunctionOrUnpack(node.right);
+      return containsNonBuilderFunction(node.left) || containsNonBuilderFunction(node.right);
     case 'Not':
-      return containsFunctionOrUnpack(node.operand);
+      return containsNonBuilderFunction(node.operand);
     case 'Group':
-      return containsFunctionOrUnpack(node.expression);
+      return containsNonBuilderFunction(node.expression);
     case 'InExpression':
-      return containsFunctionOrUnpack(node.field);
+      // Function/unpack as field in in-expression is NOT Builder-compatible
+      if (node.field.kind === 'FunctionCall' || node.field.kind === 'ArrayUnpack') return true;
+      return false;
     default:
       return false;
   }
@@ -885,6 +896,7 @@ function isBuilderCondition(node: ASTNode): boolean {
   if (node.kind === 'InExpression') return true;
   if (node.kind === 'FieldAccess') return true;  // bare boolean field
   if (node.kind === 'BooleanLiteral') return true;
+  if (node.kind === 'FunctionCall') return true;  // starts_with, ends_with, etc.
   return false;
 }
 

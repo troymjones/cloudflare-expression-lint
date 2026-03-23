@@ -241,32 +241,48 @@ describe('Expression Builder Compatibility', () => {
     });
   });
 
-  // ── Complex expressions (functions etc — skipped) ────────────────
+  // ── Function-call expressions ─────────────────────────────────────
 
-  describe('complex expressions skipped', () => {
-    it('skips function calls at top level', () => {
-      expect(hasBuilderWarning('starts_with(http.request.uri.path, "/admin")')).toBe(false);
+  describe('function calls in expressions', () => {
+    it('flags bare function call at top level (needs wrapping)', () => {
+      expect(hasBuilderWarning('starts_with(http.request.uri.path, "/admin")')).toBe(true);
     });
 
-    it('skips expressions with function calls in comparisons', () => {
+    it('accepts wrapped function call', () => {
+      expect(hasBuilderWarning('(starts_with(http.request.uri.path, "/admin"))')).toBe(false);
+    });
+
+    it('accepts function call in and-group', () => {
+      expect(hasBuilderWarning(
+        '(starts_with(http.request.uri.path, "/admin") and http.host eq "test.com")'
+      )).toBe(false);
+    });
+
+    it('flags unwrapped and-chain with function call', () => {
+      expect(hasBuilderWarning(
+        'starts_with(http.request.uri.path, "/admin") and http.host eq "test.com"'
+      )).toBe(true);
+    });
+
+    it('flags unwrapped or-branch with function call', () => {
+      expect(hasBuilderWarning(
+        '(http.host eq "test.com") or starts_with(http.request.uri.path, "/admin")'
+      )).toBe(true);
+    });
+
+    it('accepts wrapped function calls in or-chain', () => {
+      expect(hasBuilderWarning(
+        '(starts_with(http.request.uri.path, "/admin")) or (http.host eq "test.com")'
+      )).toBe(false);
+    });
+
+    it('skips expressions with function LHS in comparison (lower(field) eq "x")', () => {
       expect(hasBuilderWarning('lower(http.host) eq "test.com"')).toBe(false);
     });
 
     it('skips expressions with array unpack', () => {
       expect(hasBuilderWarning(
         'any(http.request.headers["accept"][*] contains "text/html")'
-      )).toBe(false);
-    });
-
-    it('skips and-chain with function calls', () => {
-      expect(hasBuilderWarning(
-        'starts_with(http.request.uri.path, "/admin") and http.host eq "test.com"'
-      )).toBe(false);
-    });
-
-    it('skips or-branch containing function call', () => {
-      expect(hasBuilderWarning(
-        '(http.host eq "test.com") or starts_with(http.request.uri.path, "/admin")'
       )).toBe(false);
     });
 
