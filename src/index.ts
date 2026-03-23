@@ -8,6 +8,8 @@
 export { tokenize } from './lexer.js';
 export { parse } from './parser.js';
 export { validate } from './validator.js';
+export { formatExpression } from './formatter.js';
+export type { FormatOptions } from './formatter.js';
 
 // Re-export types
 export type {

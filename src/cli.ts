@@ -21,10 +21,11 @@
  *   --help, -h          Show this help message
  */
 
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { glob } from 'glob';
 import { validate } from './validator.js';
+import { formatExpression } from './formatter.js';
 import { scanYaml } from './yaml-scanner.js';
 import type { ScannerOptions, ExpressionKeyMapping } from './yaml-scanner.js';
 import type { ValidationContext, ExpressionType, OperatorStyle, Diagnostic } from './types.js';
@@ -43,6 +44,8 @@ interface CLIOptions {
   warnExitCode: number;
   ignoreCodes: string[];
   operatorStyle: OperatorStyle;
+  prettify: boolean;
+  maxWidth: number;
   help: boolean;
 }
 
@@ -58,6 +61,8 @@ function parseArgs(argv: string[]): CLIOptions {
     warnExitCode: 0,
     ignoreCodes: [],
     operatorStyle: 'english',
+    prettify: false,
+    maxWidth: 120,
     help: false,
   };
 
@@ -129,6 +134,12 @@ function parseArgs(argv: string[]): CLIOptions {
         break;
       case '--operator-style':
         opts.operatorStyle = argv[++i] as OperatorStyle;
+        break;
+      case '--prettify':
+        opts.prettify = true;
+        break;
+      case '--max-width':
+        opts.maxWidth = parseInt(argv[++i], 10);
         break;
       default:
         if (!arg.startsWith('-')) {
@@ -260,6 +271,10 @@ Options:
                              Also configurable via "ignoreCodes" in config file.
   --operator-style <style>   Operator style: english (default), clike, off.
                              Also configurable via "operatorStyle" in config file.
+  --prettify                 Reformat expressions in YAML files for readability.
+                             Breaks long expressions across multiple lines using
+                             >- (folded block scalar) syntax.
+  --max-width <n>            Max line width for --prettify (default: 120).
   --help, -h                 Show this help
 
 Config File:
@@ -338,6 +353,11 @@ async function main(): Promise<void> {
       expr = opts.expression!;
     }
 
+    if (opts.prettify) {
+      console.log(formatExpression(expr, { maxWidth: opts.maxWidth }));
+      process.exit(0);
+    }
+
     const ctx: ValidationContext = {
       expressionType: opts.type,
       phase: opts.phase,
@@ -388,6 +408,69 @@ async function main(): Promise<void> {
   if (expandedFiles.length === 0) {
     console.error('No files matched the given patterns');
     process.exit(1);
+  }
+
+  // ── Prettify mode ────────────────────────────────────────────────
+  if (opts.prettify) {
+    let totalFormatted = 0;
+    let totalFiles = 0;
+
+    for (const file of expandedFiles) {
+      const absPath = resolve(file);
+      let content: string;
+      try {
+        content = readFileSync(absPath, 'utf-8');
+      } catch (err) {
+        console.error(`Error reading ${file}: ${err instanceof Error ? err.message : err}`);
+        continue;
+      }
+
+      const scanResult = scanYaml(content, file, scannerOpts);
+      if (scanResult.parseError || scanResult.expressions.length === 0) continue;
+
+      let modified = content;
+      let fileChanged = false;
+
+      // Process expressions in reverse order (by position in file) to avoid offset shifts
+      const sortedExprs = [...scanResult.expressions].sort((a, b) => {
+        // Sort by line number descending so replacements don't shift earlier positions
+        return (b.line ?? 0) - (a.line ?? 0);
+      });
+
+      for (const expr of sortedExprs) {
+        const formatted = formatExpression(expr.expression, { maxWidth: opts.maxWidth });
+
+        // Skip if no change needed
+        if (formatted === expr.expression.trim()) continue;
+
+        // Only reformat if the formatted version is multi-line
+        if (!formatted.includes('\n')) continue;
+
+        // Find the expression in the file and determine its indentation
+        const exprLine = findExpressionLine(modified, expr.expression);
+        if (!exprLine) continue;
+
+        const { lineStart, lineEnd, indent, key } = exprLine;
+
+        // Build the >- replacement with proper indentation
+        const exprIndent = indent + '  '; // indent expression body 2 more than the key
+        const formattedLines = formatted.split('\n').map(l => exprIndent + l).join('\n');
+        const replacement = `${indent}${key} >-\n${formattedLines}`;
+
+        modified = modified.substring(0, lineStart) + replacement + modified.substring(lineEnd);
+        fileChanged = true;
+        totalFormatted++;
+      }
+
+      if (fileChanged) {
+        writeFileSync(absPath, modified, 'utf-8');
+        totalFiles++;
+        console.log(`  ✓ ${file}`);
+      }
+    }
+
+    console.log(`\nFormatted ${totalFormatted} expressions in ${totalFiles} files`);
+    process.exit(0);
   }
 
   let totalExpressions = 0;
@@ -455,6 +538,72 @@ async function main(): Promise<void> {
   }
 
   process.exit(hasErrors ? 1 : hasWarnings ? opts.warnExitCode : 0);
+}
+
+/**
+ * Find the line(s) in file content where an expression value appears,
+ * returning the byte offsets and indentation for replacement.
+ */
+function findExpressionLine(content: string, expression: string): {
+  lineStart: number; lineEnd: number; indent: string; key: string;
+} | null {
+  const trimmed = expression.trim();
+  const lines = content.split('\n');
+  let offset = 0;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // Look for YAML key: value pattern containing the expression
+    // Handles: expression: VALUE, expression: >- / expression: |
+    const keyMatch = line.match(/^(\s*)([\w_]+):\s*(.*)$/);
+    if (keyMatch) {
+      const [, indent, key, value] = keyMatch;
+      const isExprKey = ['expression', 'source_url_expression', 'counting_expression', 'rewrite_expression', 'condition'].includes(key);
+
+      if (isExprKey) {
+        // Check if the value is inline and contains our expression
+        if (value && !['|', '>-', '>'].includes(value.trim())) {
+          // Inline value — check if it matches (strip quotes)
+          const unquoted = value.replace(/^['"]|['"]$/g, '').trim();
+          if (unquoted === trimmed || value.trim() === trimmed) {
+            const lineEnd = offset + line.length + 1; // +1 for newline
+            return { lineStart: offset, lineEnd, indent, key: `${key}:` };
+          }
+        }
+
+        // Block scalar (| or >-) — collect continuation lines
+        if (['|', '>-', '>'].includes(value.trim())) {
+          const blockStart = offset;
+          let blockEnd = offset + line.length + 1;
+          const blockIndent = indent.length + 2;
+          let j = i + 1;
+          while (j < lines.length) {
+            const nextLine = lines[j];
+            // Block continues while indented more than the key, or empty
+            if (nextLine.trim() === '' || countIndent(nextLine) >= blockIndent) {
+              blockEnd += nextLine.length + 1;
+              j++;
+            } else {
+              break;
+            }
+          }
+          // Check if the block content matches our expression
+          const blockContent = lines.slice(i + 1, j).map(l => l.trim()).join(' ').trim();
+          if (blockContent === trimmed) {
+            return { lineStart: blockStart, lineEnd: blockEnd, indent, key: `${key}:` };
+          }
+        }
+      }
+    }
+    offset += line.length + 1;
+  }
+  return null;
+}
+
+function countIndent(line: string): number {
+  const m = line.match(/^(\s*)/);
+  return m ? m[1].length : 0;
 }
 
 main().catch(err => {

@@ -1,0 +1,242 @@
+/**
+ * Expression formatter/prettifier.
+ *
+ * Reformats Cloudflare expressions across multiple lines for readability,
+ * breaking on logical operators and indenting nested groups.
+ */
+
+import { parse } from './parser.js';
+import type { ASTNode } from './types.js';
+
+export interface FormatOptions {
+  /** Maximum line width before breaking. Default: 120 */
+  maxWidth?: number;
+  /** Indentation string. Default: '  ' (2 spaces) */
+  indent?: string;
+}
+
+const DEFAULT_OPTIONS: Required<FormatOptions> = {
+  maxWidth: 120,
+  indent: '  ',
+};
+
+/**
+ * Format a Cloudflare expression for readability.
+ * Returns the formatted expression string (without YAML scalar prefix).
+ */
+export function formatExpression(expression: string, options?: FormatOptions): string {
+  const opts = { ...DEFAULT_OPTIONS, ...options };
+
+  // Try to parse — if it fails, return the expression as-is
+  let ast: ASTNode;
+  try {
+    ast = parse(expression.trim());
+  } catch {
+    return expression.trim();
+  }
+
+  const oneLine = printNode(ast);
+
+  // If it fits on one line, return as-is
+  if (oneLine.length <= opts.maxWidth) {
+    return oneLine;
+  }
+
+  // Format with line breaks
+  return printNodeMultiline(ast, 0, opts);
+}
+
+// ── Single-line printer ──────────────────────────────────────────────
+
+/** Print an AST node as a single-line string (canonical form). */
+function printNode(node: ASTNode): string {
+  switch (node.kind) {
+    case 'BooleanLiteral':
+      return String(node.value);
+
+    case 'StringLiteral':
+      return `"${escapeString(node.value)}"`;
+
+    case 'IntegerLiteral':
+      return String(node.value);
+
+    case 'FloatLiteral':
+      return String(node.value);
+
+    case 'IPLiteral':
+      return node.cidr !== undefined ? `${node.value}/${node.cidr}` : node.value;
+
+    case 'FieldAccess': {
+      let s = node.field;
+      if (node.mapKey !== undefined) s += `["${escapeString(node.mapKey)}"]`;
+      if (node.arrayIndex !== undefined) s += `[${node.arrayIndex}]`;
+      return s;
+    }
+
+    case 'NamedList':
+      return node.name.startsWith('$') ? node.name : `$${node.name}`;
+
+    case 'FunctionCall': {
+      const args = node.args.map(a => printNode(a)).join(', ');
+      return `${node.name}(${args})`;
+    }
+
+    case 'Comparison':
+      return `${printNode(node.left)} ${node.operator} ${printNode(node.right)}`;
+
+    case 'Logical':
+      return `${printNode(node.left)} ${node.operator} ${printNode(node.right)}`;
+
+    case 'Not':
+      return `not ${printNode(node.operand)}`;
+
+    case 'InExpression': {
+      const field = printNode(node.field);
+      const neg = node.negated ? 'not ' : '';
+      // Named list: ip.src in $list (no braces)
+      if (node.values.length === 1 && node.values[0].kind === 'NamedList') {
+        return `${neg}${field} in ${printNode(node.values[0])}`;
+      }
+      // Value list: ip.src in {1.2.3.4 5.6.7.8}
+      const values = node.values.map(v => printNode(v)).join(' ');
+      return `${neg}${field} in {${values}}`;
+    }
+
+    case 'Group':
+      return `(${printNode(node.expression)})`;
+
+    case 'ArrayUnpack':
+      return `${printNode(node.field)}[*]`;
+  }
+}
+
+// ── Multi-line printer ───────────────────────────────────────────────
+
+/** Print an AST node with line breaks for readability. */
+function printNodeMultiline(node: ASTNode, depth: number, opts: Required<FormatOptions>): string {
+  const ind = opts.indent.repeat(depth);
+  const indInner = opts.indent.repeat(depth + 1);
+
+  // For non-logical nodes, just use the single-line form
+  if (node.kind !== 'Logical' && node.kind !== 'Group') {
+    return printNode(node);
+  }
+
+  // Group — check if contents need breaking
+  if (node.kind === 'Group') {
+    const oneLine = printNode(node);
+    if (oneLine.length + ind.length <= opts.maxWidth) {
+      return oneLine;
+    }
+
+    const inner = node.expression;
+
+    // Group containing a logical chain — break the chain inside
+    if (inner.kind === 'Logical') {
+      const formatted = printLogicalChain(inner, depth + 1, opts);
+      return `(\n${formatted}\n${ind})`;
+    }
+
+    // Group containing an in-expression with a long list
+    if (inner.kind === 'InExpression') {
+      const formatted = printInExpressionMultiline(inner, depth + 1, opts);
+      if (formatted) return `(\n${formatted}\n${ind})`;
+    }
+
+    return oneLine;
+  }
+
+  // Top-level logical chain
+  if (node.kind === 'Logical') {
+    return printLogicalChain(node, depth, opts);
+  }
+
+  return printNode(node);
+}
+
+/**
+ * Print a logical chain (and/or) with each operand on its own line.
+ * Groups same-operator chains together.
+ */
+function printLogicalChain(node: ASTNode, depth: number, opts: Required<FormatOptions>): string {
+  const ind = opts.indent.repeat(depth);
+
+  // Collect the chain — find the top-level operator
+  if (node.kind !== 'Logical') {
+    return `${ind}${printNodeMultiline(node, depth, opts)}`;
+  }
+
+  const topOp = normalizeOp(node.operator);
+  const branches: ASTNode[] = [];
+  collectChain(node, topOp, branches);
+
+  const lines: string[] = [];
+  for (let i = 0; i < branches.length; i++) {
+    const branch = branches[i];
+    const formatted = printNodeMultiline(branch, depth, opts);
+
+    if (i === 0) {
+      lines.push(`${ind}${formatted}`);
+    } else {
+      lines.push(`${ind}${topOp} ${formatted}`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
+/** Collect branches of the same operator into a flat list. */
+function collectChain(node: ASTNode, op: string, branches: ASTNode[]): void {
+  if (node.kind === 'Logical' && normalizeOp(node.operator) === op) {
+    collectChain(node.left, op, branches);
+    collectChain(node.right, op, branches);
+  } else {
+    branches.push(node);
+  }
+}
+
+/** Normalize operator to English form for consistency. */
+function normalizeOp(op: string): string {
+  switch (op) {
+    case '&&': return 'and';
+    case '||': return 'or';
+    default: return op;
+  }
+}
+
+/** Print an in-expression with values broken across lines if needed. */
+function printInExpressionMultiline(node: ASTNode & { kind: 'InExpression' }, depth: number, opts: Required<FormatOptions>): string | null {
+  const ind = opts.indent.repeat(depth);
+  const field = printNode(node.field);
+  const neg = node.negated ? 'not ' : '';
+  const values = node.values.map(v => printNode(v));
+
+  // Check if single line fits
+  const oneLine = `${neg}${field} in {${values.join(' ')}}`;
+  if (oneLine.length + ind.length <= opts.maxWidth) {
+    return null; // Use single-line form
+  }
+
+  // Break values across lines
+  const lines: string[] = [];
+  let currentLine = '';
+  for (const val of values) {
+    if (currentLine === '') {
+      currentLine = val;
+    } else if (`${ind}  ${currentLine} ${val}`.length <= opts.maxWidth) {
+      currentLine += ` ${val}`;
+    } else {
+      lines.push(currentLine);
+      currentLine = val;
+    }
+  }
+  if (currentLine) lines.push(currentLine);
+
+  const indValues = opts.indent.repeat(depth + 1);
+  return `${ind}${neg}${field} in {\n${lines.map(l => `${indValues}${l}`).join('\n')}\n${ind}}`;
+}
+
+/** Escape special characters in a string literal. */
+function escapeString(s: string): string {
+  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
