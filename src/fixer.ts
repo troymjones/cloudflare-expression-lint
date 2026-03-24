@@ -213,7 +213,30 @@ function fixBuilderStructure(node: ASTNode, fixes: string[]): ASTNode {
           allLeaves.push(stripped);
         }
       }
-      if (allLeaves.every(l => isSimpleCondition(l) || l.kind === 'Not')) {
+
+      // Preserve (cf.zone.plan eq "ENT") as a separate top-level suffix
+      // for account-level expressions. Merging it into the group would break
+      // the validator's isZonePlanSuffixed check.
+      const lastLeaf = allLeaves[allLeaves.length - 1];
+      const isZonePlanSuffix = lastLeaf.kind === 'Comparison'
+        && lastLeaf.left.kind === 'FieldAccess' && lastLeaf.left.field === 'cf.zone.plan'
+        && lastLeaf.right.kind === 'StringLiteral' && lastLeaf.right.value === 'ENT';
+
+      if (isZonePlanSuffix) {
+        // Merge everything except the ENT suffix into a group, keep suffix separate.
+        // Merging it in would break the validator's isZonePlanSuffixed check.
+        const mainLeaves = allLeaves.slice(0, -1);
+        if (mainLeaves.length === 1 && mainLeaves[0].kind === 'Group') {
+          // Already (A) and (cf.zone.plan eq "ENT") — just fix inner if needed
+          return node;
+        }
+        if (mainLeaves.every(l => isSimpleCondition(l) || l.kind === 'Not')) {
+          fixes.push('merge (A) and (B) → (A and B)');
+          const mainGroup = buildGroup(buildAndChain(mainLeaves));
+          const suffixGroup = buildGroup(lastLeaf);
+          return { kind: 'Logical', left: mainGroup, operator: 'and', right: suffixGroup, position: 0 };
+        }
+      } else if (allLeaves.every(l => isSimpleCondition(l) || l.kind === 'Not')) {
         fixes.push('merge (A) and (B) → (A and B)');
         return buildGroup(buildAndChain(allLeaves));
       }

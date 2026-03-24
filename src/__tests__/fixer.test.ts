@@ -70,22 +70,27 @@ describe('Auto-fixer', () => {
       );
     });
 
-    it('strips double parens and merges: ((A and B)) and (C) → (A and B and C)', () => {
+    it('strips double parens and merges, preserving ENT suffix', () => {
       expect(fix('((http.host eq "a.com" and http.request.method eq "POST")) and (cf.zone.plan eq "ENT")')).toBe(
-        '(http.host eq "a.com" and http.request.method eq "POST" and cf.zone.plan eq "ENT")'
+        '(http.host eq "a.com" and http.request.method eq "POST") and (cf.zone.plan eq "ENT")'
       );
     });
 
-    it('strips double parens with not conditions', () => {
+    it('strips double parens with not conditions, preserving ENT suffix', () => {
       expect(fix('((not http.host contains "mail" and not cf.bot_management.static_resource)) and (cf.zone.plan eq "ENT")')).toBe(
-        '(not http.host contains "mail" and not cf.bot_management.static_resource and cf.zone.plan eq "ENT")'
+        '(not http.host contains "mail" and not cf.bot_management.static_resource) and (cf.zone.plan eq "ENT")'
       );
     });
 
-    it('strips triple parens and merges', () => {
+    it('strips triple parens and merges (non-ENT)', () => {
       expect(fix('(((http.host eq "a.com"))) and (http.host eq "b.com")')).toBe(
         '(http.host eq "a.com" and http.host eq "b.com")'
       );
+    });
+
+    it('does not merge (A) and (cf.zone.plan eq "ENT")', () => {
+      const result = fixExpression('(http.host eq "test.com") and (cf.zone.plan eq "ENT")');
+      expect(result.changed).toBe(false);
     });
   });
 
