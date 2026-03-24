@@ -378,7 +378,7 @@ async function main(): Promise<void> {
     }
 
     if (opts.fix) {
-      const result = fixExpression(expr, { operatorStyle: opts.operatorStyle });
+      const result = fixExpression(expr, { operatorStyle: opts.operatorStyle, expressionType: opts.type });
       console.log(result.expression);
       if (result.fixes.length > 0) {
         console.error(`Fixes: ${result.fixes.join(', ')}`);
@@ -464,7 +464,7 @@ async function main(): Promise<void> {
       // Fix expressions, then re-prettify to maintain >- formatting
       const fixedExprs: { old: string; fixed: string }[] = [];
       for (const expr of scanResult.expressions) {
-        const result = fixExpression(expr.expression, { operatorStyle: opts.operatorStyle });
+        const result = fixExpression(expr.expression, { operatorStyle: opts.operatorStyle, expressionType: expr.expressionType });
         if (!result.changed) continue;
         fixedExprs.push({ old: expr.expression, fixed: result.expression });
         totalFixed++;

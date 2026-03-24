@@ -309,6 +309,32 @@ describe('Auto-fixer', () => {
     });
   });
 
+  describe('rewrite expressions — no Builder wrapping', () => {
+    it('does not wrap rewrite_url function calls', () => {
+      const result = fixExpression('concat("/m", http.request.uri.path)', { expressionType: 'rewrite_url' });
+      expect(result.expression).toBe('concat("/m", http.request.uri.path)');
+      expect(result.changed).toBe(false);
+    });
+
+    it('does not wrap rewrite_header expressions', () => {
+      const result = fixExpression('http.host', { expressionType: 'rewrite_header' });
+      expect(result.expression).toBe('http.host');
+      expect(result.changed).toBe(false);
+    });
+
+    it('does not wrap redirect_target expressions', () => {
+      const result = fixExpression('concat("https://example.com", http.request.uri.path)', { expressionType: 'redirect_target' });
+      expect(result.expression).toBe('concat("https://example.com", http.request.uri.path)');
+      expect(result.changed).toBe(false);
+    });
+
+    it('still fixes operator style in rewrite expressions', () => {
+      const result = fixExpression('regex_replace(http.request.uri.path, "^/old/", "/new/")', { expressionType: 'rewrite_url', operatorStyle: 'english' });
+      // No operator to fix, but should not wrap
+      expect(result.changed).toBe(false);
+    });
+  });
+
   describe('preserves unfixable expressions', () => {
     it('does not distribute or-inside-and', () => {
       const expr = '((http.host eq "a" or http.host eq "b") and http.request.uri.path eq "/api")';

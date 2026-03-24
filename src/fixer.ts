@@ -6,11 +6,13 @@
  */
 
 import { parse } from './parser.js';
-import type { ASTNode, OperatorStyle } from './types.js';
+import type { ASTNode, OperatorStyle, ExpressionType } from './types.js';
 
 export interface FixOptions {
   /** Operator style to enforce. Default: 'english' */
   operatorStyle?: OperatorStyle;
+  /** Expression type. Rewrite/redirect expressions skip Builder-compat wrapping. */
+  expressionType?: ExpressionType;
 }
 
 export interface FixResult {
@@ -65,14 +67,19 @@ export function fixExpression(expression: string, options?: FixOptions): FixResu
 // ── AST Fixers ───────────────────────────────────────────────────────
 
 function fixNode(node: ASTNode, fixes: string[], options?: FixOptions): ASTNode {
+  const isFilter = !options?.expressionType || options.expressionType === 'filter';
+
   // Fix operator style first (deepest nodes first)
   let fixed = fixOperatorStyle(node, fixes, options);
 
-  // Fix De Morgan's: not (A or B) → (not A and not B)
-  fixed = fixDeMorgans(fixed, fixes);
+  // Builder-compat fixes only apply to filter expressions
+  if (isFilter) {
+    // Fix De Morgan's: not (A or B) → (not A and not B)
+    fixed = fixDeMorgans(fixed, fixes);
 
-  // Fix top-level structure for Builder compatibility
-  fixed = fixBuilderStructure(fixed, fixes);
+    // Fix top-level structure for Builder compatibility
+    fixed = fixBuilderStructure(fixed, fixes);
+  }
 
   return fixed;
 }
