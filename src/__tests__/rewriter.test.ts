@@ -562,6 +562,52 @@ describe('convertBlockScalars', () => {
     const actionLine = lines.find(l => l.includes('action: block'));
     expect(actionLine).toBeDefined();
   });
+
+  it('does not collapse plain multi-line values with unparseable expressions', () => {
+    // Expressions with template placeholders can't be parsed by the formatter.
+    // Plain multi-line YAML values should be left alone, not collapsed to inline.
+    const content = [
+      '      expression: (',
+      '          http.request.uri.path eq "/graphql" and',
+      '          http.request.method eq "POST" and',
+      '          any(http.request.headers["origin"][*] eq "https://example.com") and',
+      '          any(http.request.headers["x-app"][*] in {TEMPLATE_PLACEHOLDER})',
+      '        )',
+      '      enabled: true',
+      '',
+    ].join('\n');
+    const expressions = [
+      { expression: '( http.request.uri.path eq "/graphql" and http.request.method eq "POST" and any(http.request.headers["origin"][*] eq "https://example.com") and any(http.request.headers["x-app"][*] in {TEMPLATE_PLACEHOLDER}) )' },
+    ];
+
+    const result = rewriteExpressions(content, expressions, {
+      maxWidth: 120,
+      convertBlockScalars: true,
+    });
+    // Should not rewrite since formatter can't improve the expression
+    expect(result.count).toBe(0);
+    expect(result.content).toBe(content);
+  });
+
+  it('does rewrite plain multi-line values when formatter can improve them', () => {
+    // Parseable expressions that happen to be plain multi-line should still be rewritten
+    const content = [
+      '      expression: (http.host eq "test.com"',
+      '        and http.request.method eq "POST")',
+      '      enabled: true',
+      '',
+    ].join('\n');
+    const expressions = [
+      { expression: '(http.host eq "test.com" and http.request.method eq "POST")' },
+    ];
+
+    const result = rewriteExpressions(content, expressions, {
+      maxWidth: 120,
+      convertBlockScalars: true,
+    });
+    // Should rewrite since the expression fits on one line
+    expect(result.count).toBe(1);
+  });
 });
 
 describe('rewriteExpressions with replacements', () => {

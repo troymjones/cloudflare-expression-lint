@@ -83,6 +83,14 @@ export function rewriteExpressions(
       if (isBlockScalar === '>-' && !isMultiLine && formatted === canonicalExpr) continue;
       // Skip if inline, not multi-line, and content hasn't changed
       if (!isBlockScalar && !isMultiLine && formatted === canonicalExpr) continue;
+      // Skip plain-multiline values that can't be parsed (template placeholders, etc.)
+      // These have manual formatting we shouldn't collapse. Parseable expressions
+      // should still be standardized to inline or >-.
+      if (isBlockScalar === 'plain-multiline' && formatted === canonicalExpr) {
+        let canParse = true;
+        try { parse(canonicalExpr); } catch { canParse = false; }
+        if (!canParse) continue;
+      }
       // When converting block scalars, always rewrite |/|- to >-
       if (isBlockScalar && isBlockScalar !== '>-' && !isMultiLine && formatted === canonicalExpr) {
         // Short expression in |/|- — convert to inline
