@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { fixExpression } from '../fixer.js';
+import { parse } from '../parser.js';
+import { validate } from '../validator.js';
 
 function fix(expr: string, operatorStyle?: 'english' | 'clike' | 'off'): string {
   return fixExpression(expr, { operatorStyle }).expression;
@@ -193,6 +195,61 @@ describe('Auto-fixer', () => {
       const expr = '(http.host eq "a.com") or (http.host eq "b.com" and ip.src.country eq "US")';
       const result = fixExpression(expr);
       expect(result.changed).toBe(false);
+    });
+  });
+
+  describe('raw string preservation', () => {
+    it('De Morgan preserves raw strings', () => {
+      const result = fix('not (http.user_agent matches r"Bot.*" or http.user_agent matches r"Spider.*")');
+      expect(result).toContain('r"Bot.*"');
+      expect(result).toContain('r"Spider.*"');
+    });
+
+    it('raw strings survive operator style fix', () => {
+      const result = fix('(http.request.uri.path ~ r"^/api/v[0-9]+")');
+      expect(result).toBe('(http.request.uri.path matches r"^/api/v[0-9]+")');
+    });
+
+    it('raw strings survive merge and-groups', () => {
+      const result = fix('(http.user_agent matches r"Bot.*") and (http.host eq "test.com")');
+      expect(result).toContain('r"Bot.*"');
+      expect(result).toContain('http.host eq "test.com"');
+    });
+
+    it('raw strings survive wrap or-branches', () => {
+      const result = fix('http.request.uri.path wildcard r"*.jpg" or http.request.uri.path wildcard r"*.png"');
+      expect(result).toContain('r"*.jpg"');
+      expect(result).toContain('r"*.png"');
+    });
+  });
+
+  describe('round-trip parsing', () => {
+    it('fixed output parses without error', () => {
+      const expressions = [
+        'http.host eq "test.com"',
+        '(http.host eq "a") and (http.host eq "b")',
+        'not (http.cookie eq "a" or http.cookie eq "b")',
+        '((http.host eq "a") or (http.host eq "b"))',
+        '(http.host == "test.com") && (http.request.method != "POST")',
+        '((http.user_agent contains "Bot") and (ip.src.asnum eq 15169))',
+      ];
+      for (const expr of expressions) {
+        const fixed = fix(expr);
+        expect(() => parse(fixed)).not.toThrow();
+      }
+    });
+
+    it('fixed output validates without parse errors', () => {
+      const expressions = [
+        'http.host eq "test.com" and http.request.method eq "POST"',
+        'not (http.cookie eq "a" or http.cookie eq "b") and http.host eq "test.com"',
+        '(http.host == "a") || (http.host == "b")',
+      ];
+      for (const expr of expressions) {
+        const fixed = fix(expr);
+        const result = validate(fixed, { expressionType: 'filter' });
+        expect(result.valid).toBe(true);
+      }
     });
   });
 

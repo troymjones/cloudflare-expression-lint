@@ -242,6 +242,69 @@ describe('Expression Formatter', () => {
     });
   });
 
+  describe('never breaks mid-condition', () => {
+    it('keeps long string value on one line', () => {
+      const expr = '(http.user_agent eq "Mozilla/5.0 (Linux; Android 9; SM-G960F Build/PPR1.180610.011; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/74.0.3729.157 Mobile Safari/537.36")';
+      const result = formatExpression(expr, { maxWidth: 40 });
+      // The condition must stay on one line even though it exceeds maxWidth
+      for (const line of result.split('\n')) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith('http.user_agent')) {
+          expect(trimmed).toContain('eq "Mozilla');
+          expect(trimmed).toContain('Safari/537.36"');
+        }
+      }
+    });
+
+    it('keeps long field name with map key on one line', () => {
+      const expr = '(any(http.request.headers["x-custom-header"][*] eq "value") and http.host eq "test.com")';
+      const result = formatExpression(expr, { maxWidth: 40 });
+      const lines = result.split('\n');
+      // The any() condition must be on one line
+      const anyLine = lines.find(l => l.includes('any('));
+      expect(anyLine).toContain('eq "value"');
+    });
+
+    it('keeps long regex on one line', () => {
+      const expr = '(http.user_agent matches r"^Mozilla\\/5\\.0.*AppleWebKit\\/537\\.36.*Chrome\\/1[0-9][0-9]\\.0\\.0\\.0 Safari\\/537\\.36$" and http.host eq "test.com")';
+      const result = formatExpression(expr, { maxWidth: 40 });
+      const matchesLine = result.split('\n').find(l => l.includes('matches'));
+      expect(matchesLine).toContain('r"^Mozilla');
+      expect(matchesLine).toContain('537\\.36$"');
+    });
+
+    it('keeps long starts_with on one line', () => {
+      const expr = '(starts_with(http.request.uri.path, "/very/long/path/prefix/that/exceeds/width") and http.host eq "test.com")';
+      const result = formatExpression(expr, { maxWidth: 40 });
+      const swLine = result.split('\n').find(l => l.includes('starts_with'));
+      expect(swLine).toContain('/very/long/path');
+      expect(swLine).toContain('/width"');
+    });
+  });
+
+  describe('idempotency', () => {
+    it('second prettify produces no change', () => {
+      const expr = '(http.host eq "secure.example.com" and http.request.method eq "POST" and http.request.uri.path eq "/api/webhook" and not ip.src in $blocklist)';
+      const first = formatExpression(expr, { maxWidth: 80 });
+      const second = formatExpression(first, { maxWidth: 80 });
+      expect(second).toBe(first);
+    });
+
+    it('idempotent for or-chains', () => {
+      const expr = '(http.host eq "a.example.com") or (http.host eq "b.example.com") or (http.host eq "c.example.com") or (http.host eq "d.example.com")';
+      const first = formatExpression(expr, { maxWidth: 80 });
+      const second = formatExpression(first, { maxWidth: 80 });
+      expect(second).toBe(first);
+    });
+
+    it('idempotent for expressions with raw strings', () => {
+      const expr = '(http.user_agent matches r"Safari\\/537\\.36" and http.host eq "test.com" and ip.src.country eq "US")';
+      const first = formatExpression(expr, { maxWidth: 80 });
+      const second = formatExpression(first, { maxWidth: 80 });
+      expect(second).toBe(first);
+    });
+  });
+
   describe('edge cases', () => {
     it('handles unparseable expression gracefully', () => {
       expect(formatExpression('this is not valid {')).toBe('this is not valid {');
