@@ -17,7 +17,7 @@ A TypeScript parser, validator, linter, formatter, and auto-fixer for Cloudflare
 - `src/schemas/fields.ts` — Field registry (211+ fields)
 - `src/schemas/functions.ts` — Function registry (25+ functions)
 - `src/schemas/operators.ts` — Operator definitions with type constraints
-- `src/__tests__/` — Test suite (557 tests across 16 files)
+- `src/__tests__/` — Test suite (567 tests across 16 files)
 - `scripts/sync-cloudflare-docs.ts` — Automated sync from cloudflare-docs repo
 
 ## Commands
