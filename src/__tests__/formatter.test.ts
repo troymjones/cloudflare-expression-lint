@@ -331,6 +331,22 @@ describe('Expression Formatter', () => {
   });
 
   describe('edge cases', () => {
+    it('adds space when operator is glued to closing quote', () => {
+      const expr = '(http.host eq "a"or http.host eq "b")';
+      const result = formatExpression(expr);
+      // The formatter re-prints from AST, so "or should get proper spacing
+      expect(result).not.toContain('"or');
+      // Either single-line with space or multi-line with or on new line
+      expect(result).toMatch(/"\s+or\s|"\nor/);
+    });
+
+    it('in-list with spaces round-trips correctly', () => {
+      const expr = '(ip.src in {1.2.3.4 5.6.7.8 9.10.11.12 13.14.15.16 17.18.19.20 21.22.23.24 25.26.27.28 29.30.31.32})';
+      const first = formatExpression(expr, { maxWidth: 80 });
+      const second = formatExpression(first, { maxWidth: 80 });
+      expect(second).toBe(first);
+    });
+
     it('handles bare not ssl', () => {
       expect(formatExpression('not ssl')).toBe('not ssl');
     });
