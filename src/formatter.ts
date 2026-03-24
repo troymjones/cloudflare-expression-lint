@@ -55,6 +55,7 @@ function printNode(node: ASTNode): string {
       return String(node.value);
 
     case 'StringLiteral':
+      if (node.raw) return `r"${node.value}"`;
       return `"${escapeString(node.value)}"`;
 
     case 'IntegerLiteral':

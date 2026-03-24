@@ -142,6 +142,18 @@ describe('Auto-fixer', () => {
       );
     });
 
+    it('preserves raw string r"" prefix', () => {
+      expect(fix('http.request.uri.path wildcard r"*.jpg" or http.request.uri.path wildcard r"*.png"')).toBe(
+        '(http.request.uri.path wildcard r"*.jpg") or (http.request.uri.path wildcard r"*.png")'
+      );
+    });
+
+    it('preserves raw string in regex', () => {
+      expect(fix('(http.user_agent matches r"Mozilla\\/5\\.0.*Chrome")')).toBe(
+        '(http.user_agent matches r"Mozilla\\/5\\.0.*Chrome")'
+      );
+    });
+
     it('fixes English to C-like when configured', () => {
       expect(fix('(http.host eq "test.com")', 'clike')).toBe('(http.host == "test.com")');
     });

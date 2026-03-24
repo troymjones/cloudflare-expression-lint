@@ -77,6 +77,8 @@ export interface BooleanLiteralNode {
 export interface StringLiteralNode {
   kind: 'StringLiteral';
   value: string;
+  /** Whether this was a raw string literal (r"...") */
+  raw?: boolean;
   position: number;
 }
 

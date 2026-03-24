@@ -195,7 +195,7 @@ class Parser {
 
       if (token.type === TokenType.String || token.type === TokenType.RawString) {
         this.advance();
-        values.push({ kind: 'StringLiteral', value: token.value, position: token.position });
+        values.push({ kind: 'StringLiteral', value: token.value, raw: token.type === TokenType.RawString, position: token.position });
       } else if (token.type === TokenType.Integer) {
         this.advance();
         // Check for range (..)
@@ -250,7 +250,7 @@ class Parser {
       case TokenType.String:
       case TokenType.RawString:
         this.advance();
-        return { kind: 'StringLiteral', value: token.value, position: token.position };
+        return { kind: 'StringLiteral', value: token.value, raw: token.type === TokenType.RawString, position: token.position };
 
       case TokenType.Integer:
         this.advance();

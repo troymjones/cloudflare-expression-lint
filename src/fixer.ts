@@ -352,6 +352,7 @@ function printNode(node: ASTNode): string {
     case 'BooleanLiteral':
       return String(node.value);
     case 'StringLiteral':
+      if (node.raw) return `r"${node.value}"`;
       return `"${node.value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
     case 'IntegerLiteral':
     case 'FloatLiteral':

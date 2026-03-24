@@ -177,11 +177,17 @@ describe('Expression Formatter', () => {
       expect(result).toContain('starts_with');
     });
 
-    it('preserves raw strings', () => {
-      const expr = '(http.user_agent matches r"Mozilla\\/5\\.0.*Chrome\\/1[0-9][0-9]" and http.host eq "test.com" and ip.src.country eq "US")';
+    it('preserves raw string r"" prefix', () => {
+      const expr = '(http.user_agent matches r"Mozilla\\/5\\.0.*Chrome" and http.host eq "test.com")';
       const result = formatExpression(expr, { maxWidth: 80 });
-      expect(result).toContain('matches');
-      expect(result).toContain('http.host eq "test.com"');
+      expect(result).toContain('r"Mozilla\\/5\\.0.*Chrome"');
+    });
+
+    it('preserves raw strings in wildcard', () => {
+      const expr = '(http.request.uri.path wildcard r"*.jpg") or (http.request.uri.path wildcard r"*.png")';
+      const result = formatExpression(expr);
+      expect(result).toContain('r"*.jpg"');
+      expect(result).toContain('r"*.png"');
     });
   });
 
