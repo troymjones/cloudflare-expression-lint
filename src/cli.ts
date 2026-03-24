@@ -26,7 +26,7 @@ import { resolve } from 'node:path';
 import { glob } from 'glob';
 import { validate } from './validator.js';
 import { formatExpression } from './formatter.js';
-import { rewriteExpressions } from './rewriter.js';
+import { rewriteExpressions, findExpressionLocation } from './rewriter.js';
 import { fixExpression } from './fixer.js';
 import { scanYaml } from './yaml-scanner.js';
 import type { ScannerOptions, ExpressionKeyMapping } from './yaml-scanner.js';
@@ -461,31 +461,45 @@ async function main(): Promise<void> {
       const scanResult = scanYaml(content, file, scannerOpts);
       if (scanResult.parseError || scanResult.expressions.length === 0) continue;
 
-      let modified = content;
-      let fileChanged = false;
-
+      // Fix expressions, then re-prettify to maintain >- formatting
+      const fixedExprs: { old: string; fixed: string }[] = [];
       for (const expr of scanResult.expressions) {
         const result = fixExpression(expr.expression, { operatorStyle: opts.operatorStyle });
         if (!result.changed) continue;
-
-        // Replace the old expression with the fixed one in the file content
-        const escaped = expr.expression.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const re = new RegExp(escaped.replace(/\s+/g, '\\s+'));
-        const newContent = modified.replace(re, result.expression);
-        if (newContent !== modified) {
-          modified = newContent;
-          fileChanged = true;
-          totalFixed++;
-          if (!opts.quiet) {
-            for (const fix of result.fixes) {
-              console.log(`  ${file}: ${fix}`);
-            }
+        fixedExprs.push({ old: expr.expression, fixed: result.expression });
+        totalFixed++;
+        if (!opts.quiet) {
+          for (const fix of result.fixes) {
+            console.log(`  ${file}: ${fix}`);
           }
         }
       }
 
-      if (fileChanged) {
+      if (fixedExprs.length > 0) {
         if (!opts.check) {
+          // Use rewriteExpressions with the fixed expressions to handle >- blocks
+          const fixedAsExprs = fixedExprs.map(f => ({ expression: f.old }));
+          let modified = content;
+
+          // Replace each expression using findExpressionLocation for accurate matching
+          for (const { old: oldExpr, fixed: fixedExpr } of fixedExprs.reverse()) {
+            const loc = findExpressionLocation(modified, oldExpr);
+            if (!loc) continue;
+
+            const { lineStart, lineEnd, indent, key } = loc;
+            // Format the fixed expression for readability
+            const formatted = formatExpression(fixedExpr, { maxWidth: opts.maxWidth });
+            if (formatted.includes('\n')) {
+              const exprIndent = indent + '  ';
+              const formattedLines = formatted.split('\n').map(l => exprIndent + l).join('\n');
+              const replacement = `${indent}${key} >-\n${formattedLines}\n`;
+              modified = modified.substring(0, lineStart) + replacement + modified.substring(lineEnd);
+            } else {
+              const replacement = `${indent}${key} ${formatted}\n`;
+              modified = modified.substring(0, lineStart) + replacement + modified.substring(lineEnd);
+            }
+          }
+
           writeFileSync(absPath, modified, 'utf-8');
         }
         totalFiles++;

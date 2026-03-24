@@ -51,10 +51,14 @@ export function fixExpression(expression: string, options?: FixOptions): FixResu
   // Print the fixed AST
   const result = printNode(fixed);
 
+  // Compare against the canonical form of the original (re-printed from AST)
+  // to avoid false positives from whitespace differences in >- block scalars
+  const originalCanonical = printNode(ast);
+
   return {
     expression: result,
-    changed: result !== expression.trim(),
-    fixes,
+    changed: result !== originalCanonical,
+    fixes: result !== originalCanonical ? fixes : [],
   };
 }
 
