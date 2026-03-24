@@ -115,6 +115,18 @@ describe('Auto-fixer', () => {
       const result = fix('((http.host eq "a.com") or (http.host eq "b.com")) and (cf.zone.plan eq "ENT")');
       expect(result).not.toContain('(((');
     });
+
+    it('De Morgan + ENT produces double-wrapped result', () => {
+      expect(fix('not (http.host eq "a.com" or http.host eq "b.com") and (cf.zone.plan eq "ENT")')).toBe(
+        '((not http.host eq "a.com" and not http.host eq "b.com")) and (cf.zone.plan eq "ENT")'
+      );
+    });
+
+    it('or-within-and + ENT does not triple-wrap', () => {
+      const result = fix('((http.host eq "a.com" and http.request.method eq "POST") or (http.host eq "b.com")) and (cf.zone.plan eq "ENT")');
+      expect(result).not.toContain('(((');
+      expect(result).toContain(')) and (cf.zone.plan eq "ENT")');
+    });
   });
 
   describe('wrap or-branches', () => {
