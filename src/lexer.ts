@@ -70,11 +70,8 @@ export function tokenize(input: string): Token[] {
         advance(); // consume backslash
         const escaped = advance();
         switch (escaped) {
-          case '"': value += '"'; break;
-          case '\\': value += '\\'; break;
-          case 'n': value += '\n'; break;
-          case 't': value += '\t'; break;
-          default: value += '\\' + escaped; break;  // preserve unrecognized escapes (e.g., \d, \., \&)
+          case '"': value += '"'; break;  // \" → " (string delimiter escape)
+          default: value += '\\' + escaped; break;  // preserve all other escapes verbatim (\\, \d, \., \n, etc.)
         }
       } else {
         value += advance();

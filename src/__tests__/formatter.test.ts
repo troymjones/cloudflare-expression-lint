@@ -195,6 +195,12 @@ describe('Expression Formatter', () => {
       );
     });
 
+    it('preserves double backslash (literal backslash)', () => {
+      expect(formatExpression('(http.request.uri.path matches "path\\\\value")')).toBe(
+        '(http.request.uri.path matches "path\\\\value")'
+      );
+    });
+
     it('preserves raw strings in wildcard', () => {
       const expr = '(http.request.uri.path wildcard r"*.jpg") or (http.request.uri.path wildcard r"*.png")';
       const result = formatExpression(expr);

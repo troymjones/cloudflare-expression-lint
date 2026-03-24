@@ -23,9 +23,9 @@ describe('Lexer', () => {
       expect(tokens).toEqual([[TokenType.String, 'he said "hi"']]);
     });
 
-    it('tokenizes strings with escaped backslashes', () => {
+    it('tokenizes strings with escaped backslashes (preserved verbatim)', () => {
       const tokens = tv('"path\\\\to"');
-      expect(tokens).toEqual([[TokenType.String, 'path\\to']]);
+      expect(tokens).toEqual([[TokenType.String, 'path\\\\to']]);
     });
 
     it('preserves \\d regex escape in strings', () => {
@@ -46,6 +46,11 @@ describe('Lexer', () => {
     it('preserves \\w \\s \\b and other regex classes', () => {
       const tokens = tv('"\\w+\\s\\b"');
       expect(tokens).toEqual([[TokenType.String, '\\w+\\s\\b']]);
+    });
+
+    it('preserves \\n \\t as literal backslash sequences (not control chars)', () => {
+      const tokens = tv('"test\\nvalue"');
+      expect(tokens).toEqual([[TokenType.String, 'test\\nvalue']]);
     });
 
     it('tokenizes empty strings', () => {
