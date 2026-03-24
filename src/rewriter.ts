@@ -11,6 +11,9 @@ import { parse } from './parser.js';
 export interface RewriteOptions extends FormatOptions {
   /** Convert existing | and |- block scalars to >- */
   convertBlockScalars?: boolean;
+  /** Map of canonical original expression → replacement expression.
+   *  When provided, the replacement is formatted and written instead of the original. */
+  replacements?: Map<string, string>;
 }
 
 export interface RewriteResult {
@@ -44,16 +47,19 @@ export function rewriteExpressions(
   const uniqueExprs = deduplicateExpressions(expressions);
 
   for (const expr of uniqueExprs) {
-    const formatted = formatExpression(expr.expression, options);
-    const isMultiLine = formatted.includes('\n');
-
     // Compare against the canonical (parsed and re-printed) form of the original
     // to handle whitespace differences from >- block scalars
     const canonicalExpr = canonicalize(expr.expression);
 
+    // If a replacement is provided, format the replacement instead of the original
+    const exprToFormat = options?.replacements?.get(canonicalExpr) ?? expr.expression;
+    const formatted = formatExpression(exprToFormat, options);
+    const isMultiLine = formatted.includes('\n');
+
     // Skip if no change needed and not converting block scalars
-    if (formatted === canonicalExpr && !options?.convertBlockScalars) continue;
-    if (!isMultiLine && !options?.convertBlockScalars) continue;
+    const hasReplacement = options?.replacements?.has(canonicalExpr) ?? false;
+    if (!hasReplacement && formatted === canonicalExpr && !options?.convertBlockScalars) continue;
+    if (!hasReplacement && !isMultiLine && !options?.convertBlockScalars) continue;
 
     // Find all occurrences in the file (same expression may appear multiple times)
     let searchFrom = modified.length;
@@ -135,12 +141,14 @@ export function findExpressionLocation(
   // Normalize the search expression: collapse whitespace so multi-line
   // scanner output matches against joined block scalar content
   const trimmed = expression.split('\n').map(l => l.trim()).filter(l => l !== '').join(' ').trim();
-  const lines = content.split('\n');
+  // Strip \r from lines for regex matching (CRLF files), but keep offsets based on original content
+  const rawLines = content.split('\n');
+  const lines = rawLines.map(l => l.replace(/\r$/, ''));
   let offset = 0;
   const offsets: number[] = [];
 
-  // Build line offset index
-  for (const line of lines) {
+  // Build line offset index using raw line lengths to preserve correct byte offsets
+  for (const line of rawLines) {
     offsets.push(offset);
     offset += line.length + 1;
   }
@@ -162,10 +170,35 @@ export function findExpressionLocation(
 
     // Inline value
     if (value && !['|', '>-', '>', '|+', '|-', '>+'].includes(value.trim())) {
-      const unquoted = value.replace(/^['"]|['"]$/g, '').trim();
+      let unquoted = value.replace(/^['"]|['"]$/g, '').trim();
+      // Unescape YAML double-quoted string escapes
+      if (value.trim().startsWith('"')) {
+        unquoted = unquoted.replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+      }
       if (unquoted === trimmed || value.trim() === trimmed) {
         const lineEnd = offsets[i] + line.length + 1;
         return { lineStart: offsets[i], lineEnd, indent, key: `${key}:` };
+      }
+
+      // Plain multi-line value (wraps across lines without block scalar indicator)
+      if (unquoted && !value.trim().startsWith('"') && !value.trim().startsWith("'")) {
+        const keyIndent = indent.length;
+        let j = i + 1;
+        while (j < lines.length) {
+          const nextLine = lines[j];
+          if (nextLine.trim() === '' || countIndent(nextLine) > keyIndent) {
+            j++;
+          } else {
+            break;
+          }
+        }
+        if (j > i + 1) {
+          const allLines = [value, ...lines.slice(i + 1, j)].map(l => l.trim()).filter(l => l !== '').join(' ').trim();
+          if (allLines === trimmed) {
+            const blockEnd = j < lines.length ? offsets[j] : content.length;
+            return { lineStart: offsets[i], lineEnd: blockEnd, indent, key: `${key}:`, isBlockScalar: 'plain-multiline' };
+          }
+        }
       }
     }
 

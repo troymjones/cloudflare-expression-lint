@@ -500,3 +500,68 @@ describe('convertBlockScalars', () => {
     expect(actionLine).toBeDefined();
   });
 });
+
+describe('rewriteExpressions with replacements', () => {
+  it('applies replacement and formats through same code path as prettify', () => {
+    const content = [
+      '    expression: (A) and (B)',
+      '    enabled: true',
+      '',
+    ].join('\n');
+    const expressions = [{ expression: '(A) and (B)' }];
+    const replacements = new Map([['(A) and (B)', '(A and B)']]);
+
+    const result = rewriteExpressions(content, expressions, { replacements });
+    expect(result.content).toContain('(A and B)');
+    expect(result.count).toBe(1);
+  });
+
+  it('fix then prettify produces stable output (convergence)', () => {
+    const content = [
+      '    expression: >-',
+      '      (http.host eq "test.com"',
+      '      and http.request.method eq "POST")',
+      '    enabled: true',
+      '',
+    ].join('\n');
+    const expressions = [
+      { expression: '(http.host eq "test.com" and http.request.method eq "POST")' },
+    ];
+
+    // Simulate --fix with replacements (no actual fix needed, just format)
+    const fixResult = rewriteExpressions(content, expressions, {
+      maxWidth: 120,
+      convertBlockScalars: true,
+      replacements: new Map(),
+    });
+
+    // Simulate --prettify on the result
+    const prettifyResult = rewriteExpressions(fixResult.content, expressions, {
+      maxWidth: 120,
+      convertBlockScalars: true,
+    });
+
+    // Should be stable: prettify after fix produces no changes
+    expect(prettifyResult.count).toBe(0);
+    expect(prettifyResult.content).toBe(fixResult.content);
+  });
+
+  it('replacement with multi-line formatting uses >- block scalar', () => {
+    const content = [
+      '    expression: (A) and (B) and (C)',
+      '    enabled: true',
+      '',
+    ].join('\n');
+    const expressions = [{ expression: '(A) and (B) and (C)' }];
+    // Fix merges and-groups
+    const replacements = new Map([['(A) and (B) and (C)', '(A and B and C)']]);
+
+    const result = rewriteExpressions(content, expressions, {
+      maxWidth: 20,
+      convertBlockScalars: true,
+      replacements,
+    });
+    expect(result.content).toContain('>-');
+    expect(result.count).toBe(1);
+  });
+});

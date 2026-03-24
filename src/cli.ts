@@ -26,7 +26,7 @@ import { resolve } from 'node:path';
 import { glob } from 'glob';
 import { validate } from './validator.js';
 import { formatExpression } from './formatter.js';
-import { rewriteExpressions, findExpressionLocation } from './rewriter.js';
+import { rewriteExpressions } from './rewriter.js';
 import { fixExpression } from './fixer.js';
 import { scanYaml } from './yaml-scanner.js';
 import type { ScannerOptions, ExpressionKeyMapping } from './yaml-scanner.js';
@@ -461,12 +461,14 @@ async function main(): Promise<void> {
       const scanResult = scanYaml(content, file, scannerOpts);
       if (scanResult.parseError || scanResult.expressions.length === 0) continue;
 
-      // Fix expressions, then re-prettify to maintain >- formatting
-      const fixedExprs: { old: string; fixed: string }[] = [];
+      // Build replacements map: canonical original → fixed expression
+      const replacements = new Map<string, string>();
       for (const expr of scanResult.expressions) {
         const result = fixExpression(expr.expression, { operatorStyle: opts.operatorStyle, expressionType: expr.expressionType });
         if (!result.changed) continue;
-        fixedExprs.push({ old: expr.expression, fixed: result.expression });
+        // Canonicalize the original to match what rewriteExpressions uses for lookup
+        const canonical = formatExpression(expr.expression, { maxWidth: Infinity });
+        replacements.set(canonical, result.expression);
         totalFixed++;
         if (!opts.quiet) {
           for (const fix of result.fixes) {
@@ -475,32 +477,15 @@ async function main(): Promise<void> {
         }
       }
 
-      if (fixedExprs.length > 0) {
+      if (replacements.size > 0) {
         if (!opts.check) {
-          // Use rewriteExpressions with the fixed expressions to handle >- blocks
-          const fixedAsExprs = fixedExprs.map(f => ({ expression: f.old }));
-          let modified = content;
-
-          // Replace each expression using findExpressionLocation for accurate matching
-          for (const { old: oldExpr, fixed: fixedExpr } of fixedExprs.reverse()) {
-            const loc = findExpressionLocation(modified, oldExpr);
-            if (!loc) continue;
-
-            const { lineStart, lineEnd, indent, key } = loc;
-            // Format the fixed expression for readability
-            const formatted = formatExpression(fixedExpr, { maxWidth: opts.maxWidth });
-            if (formatted.includes('\n')) {
-              const exprIndent = indent + '  ';
-              const formattedLines = formatted.split('\n').map(l => exprIndent + l).join('\n');
-              const replacement = `${indent}${key} >-\n${formattedLines}\n`;
-              modified = modified.substring(0, lineStart) + replacement + modified.substring(lineEnd);
-            } else {
-              const replacement = `${indent}${key} ${formatted}\n`;
-              modified = modified.substring(0, lineStart) + replacement + modified.substring(lineEnd);
-            }
-          }
-
-          writeFileSync(absPath, modified, 'utf-8');
+          // Route through rewriteExpressions so --fix produces identical >- output as --prettify
+          const result = rewriteExpressions(content, scanResult.expressions, {
+            maxWidth: opts.maxWidth,
+            convertBlockScalars: true,
+            replacements,
+          });
+          writeFileSync(absPath, result.content, 'utf-8');
         }
         totalFiles++;
       }
