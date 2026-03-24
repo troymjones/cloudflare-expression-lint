@@ -154,7 +154,7 @@ export function findExpressionLocation(
           break;
         }
       }
-      const blockContent = lines.slice(i + 1, j).map(l => l.trim()).join(' ').trim();
+      const blockContent = lines.slice(i + 1, j).map(l => l.trim()).filter(l => l !== '').join(' ').trim();
       if (blockContent === trimmed) {
         const blockEnd = j < lines.length ? offsets[j] : content.length;
         return { lineStart: offsets[i], lineEnd: blockEnd, indent, key: `${key}:`, isBlockScalar: value.trim() };

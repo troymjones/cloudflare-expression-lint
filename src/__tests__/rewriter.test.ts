@@ -364,4 +364,101 @@ describe('convertBlockScalars', () => {
     expect(result.count).toBe(0);
     expect(result.content).toBe(content);
   });
+
+  it('preserves raw strings when converting | to >-', () => {
+    const content = [
+      '    expression: |',
+      '      (http.user_agent matches r"Bot.*"',
+      '      and http.host eq "test.com"',
+      '      and http.request.uri.path matches r"^/api/v[0-9]+")',
+      '    enabled: true',
+      '',
+    ].join('\n');
+
+    const expressions = [
+      { expression: '(http.user_agent matches r"Bot.*" and http.host eq "test.com" and http.request.uri.path matches r"^/api/v[0-9]+")' },
+    ];
+
+    const result = rewriteExpressions(content, expressions, { convertBlockScalars: true, maxWidth: 80 });
+    expect(result.count).toBe(1);
+    expect(result.content).toContain('expression: >-');
+    expect(result.content).toContain('r"Bot.*"');
+    expect(result.content).toContain('r"^/api/v[0-9]+"');
+  });
+
+  it('handles multiple | expressions in one file', () => {
+    const content = [
+      '- description: Rule A',
+      '  expression: |',
+      '    (http.host eq "a.example.com"',
+      '    and http.request.method eq "POST"',
+      '    and http.request.uri.path eq "/api/webhook")',
+      '  enabled: true',
+      '- description: Rule B',
+      '  expression: |',
+      '    (http.host eq "b.example.com"',
+      '    and http.request.method eq "GET"',
+      '    and http.request.uri.path eq "/api/status")',
+      '  enabled: true',
+      '',
+    ].join('\n');
+
+    const expressions = [
+      { expression: '(http.host eq "a.example.com" and http.request.method eq "POST" and http.request.uri.path eq "/api/webhook")' },
+      { expression: '(http.host eq "b.example.com" and http.request.method eq "GET" and http.request.uri.path eq "/api/status")' },
+    ];
+
+    const result = rewriteExpressions(content, expressions, { convertBlockScalars: true, maxWidth: 80 });
+    expect(result.count).toBe(2);
+    const blockCount = (result.content.match(/expression: >-/g) || []).length;
+    expect(blockCount).toBe(2);
+    expect(result.content).not.toContain('expression: |');
+    // Both enabled: true should be on their own lines
+    const enabledLines = result.content.split('\n').filter(l => l.trim() === 'enabled: true');
+    expect(enabledLines.length).toBe(2);
+  });
+
+  it('converts | with empty lines in block to >-', () => {
+    const content = [
+      '    expression: |',
+      '      (http.host eq "test.com"',
+      '',
+      '      and http.request.method eq "POST")',
+      '    enabled: true',
+      '',
+    ].join('\n');
+
+    const expressions = [
+      { expression: '(http.host eq "test.com" and http.request.method eq "POST")' },
+    ];
+
+    const result = rewriteExpressions(content, expressions, { convertBlockScalars: true, maxWidth: 120 });
+    expect(result.count).toBe(1);
+    expect(result.content).not.toContain('expression: |');
+  });
+
+  it('does not corrupt next YAML key when converting |', () => {
+    const content = [
+      '    expression: |',
+      '      (http.host eq "test.com"',
+      '      and http.request.method eq "POST"',
+      '      and http.request.uri.path eq "/api/v1/resource")',
+      '    identifier: RULE-001',
+      '    action: block',
+      '',
+    ].join('\n');
+
+    const expressions = [
+      { expression: '(http.host eq "test.com" and http.request.method eq "POST" and http.request.uri.path eq "/api/v1/resource")' },
+    ];
+
+    const result = rewriteExpressions(content, expressions, { convertBlockScalars: true, maxWidth: 80 });
+    expect(result.count).toBe(1);
+    const lines = result.content.split('\n');
+    const idLine = lines.find(l => l.includes('identifier: RULE-001'));
+    expect(idLine).toBeDefined();
+    expect(idLine!.trim()).toBe('identifier: RULE-001');
+    const actionLine = lines.find(l => l.includes('action: block'));
+    expect(actionLine).toBeDefined();
+  });
 });
