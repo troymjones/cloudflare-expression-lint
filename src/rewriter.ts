@@ -6,6 +6,7 @@
  */
 
 import { formatExpression, type FormatOptions } from './formatter.js';
+import { parse } from './parser.js';
 
 export interface RewriteOptions extends FormatOptions {
   /** Convert existing | and |- block scalars to >- */
@@ -46,8 +47,12 @@ export function rewriteExpressions(
     const formatted = formatExpression(expr.expression, options);
     const isMultiLine = formatted.includes('\n');
 
+    // Compare against the canonical (parsed and re-printed) form of the original
+    // to handle whitespace differences from >- block scalars
+    const canonicalExpr = canonicalize(expr.expression);
+
     // Skip if no change needed and not converting block scalars
-    if (formatted === expr.expression.trim() && !options?.convertBlockScalars) continue;
+    if (formatted === canonicalExpr && !options?.convertBlockScalars) continue;
     if (!isMultiLine && !options?.convertBlockScalars) continue;
 
     // Find all occurrences in the file (same expression may appear multiple times)
@@ -59,12 +64,21 @@ export function rewriteExpressions(
       const { lineStart, lineEnd, indent, key, isBlockScalar } = location;
       searchFrom = lineStart; // next search ends before this match
 
-      // Skip if already >- and content hasn't changed
-      if (isBlockScalar === '>-' && formatted === expr.expression.trim() && !isMultiLine) continue;
+      // Skip if already >- and the formatted output matches the existing block content.
+      // Compare by reading the existing block lines and checking if they'd produce
+      // the same >- block as the formatter would write.
+      if (isBlockScalar === '>-' && isMultiLine) {
+        const existingBlock = content.substring(lineStart, lineEnd);
+        const exprIndent = indent + '  ';
+        const formattedLines = formatted.split('\n').map(l => exprIndent + l).join('\n');
+        const wouldWrite = `${indent}${key} >-\n${formattedLines}\n`;
+        if (existingBlock === wouldWrite) continue;
+      }
+      if (isBlockScalar === '>-' && !isMultiLine && formatted === canonicalExpr) continue;
       // Skip if inline, not multi-line, and content hasn't changed
-      if (!isBlockScalar && !isMultiLine && formatted === expr.expression.trim()) continue;
+      if (!isBlockScalar && !isMultiLine && formatted === canonicalExpr) continue;
       // When converting block scalars, always rewrite |/|- to >-
-      if (isBlockScalar && isBlockScalar !== '>-' && !isMultiLine && formatted === expr.expression.trim()) {
+      if (isBlockScalar && isBlockScalar !== '>-' && !isMultiLine && formatted === canonicalExpr) {
         // Short expression in |/|- — convert to inline
         const replacement = `${indent}${key} ${formatted}\n`;
         modified = modified.substring(0, lineStart) + replacement + modified.substring(lineEnd);
@@ -85,11 +99,22 @@ export function rewriteExpressions(
   return { content: modified, count };
 }
 
+/** Canonicalize an expression by parsing and re-formatting as single line.
+ *  This normalizes whitespace differences from >- block scalar joining. */
+function canonicalize(expression: string): string {
+  try {
+    // formatExpression parses and re-prints, normalizing whitespace
+    return formatExpression(expression, { maxWidth: Infinity });
+  } catch {
+    return expression.split('\n').map(l => l.trim()).filter(l => l !== '').join(' ').trim();
+  }
+}
+
 /** Deduplicate expressions by their trimmed value */
 function deduplicateExpressions(expressions: { expression: string }[]): { expression: string }[] {
   const seen = new Set<string>();
   return expressions.filter(e => {
-    const key = e.expression.trim();
+    const key = canonicalize(e.expression);
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -107,7 +132,9 @@ export function findExpressionLocation(
   /** The block scalar type if the expression uses one, or null for inline */
   isBlockScalar?: string;
 } | null {
-  const trimmed = expression.trim();
+  // Normalize the search expression: collapse whitespace so multi-line
+  // scanner output matches against joined block scalar content
+  const trimmed = expression.split('\n').map(l => l.trim()).filter(l => l !== '').join(' ').trim();
   const lines = content.split('\n');
   let offset = 0;
   const offsets: number[] = [];
