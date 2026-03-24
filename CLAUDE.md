@@ -1,41 +1,35 @@
 # cloudflare-expression-lint
 
 ## What This Is
-A TypeScript parser, validator, and linter for Cloudflare Rules Language expressions. It catches errors in Cloudflare expressions before they reach `terraform apply`. Published on npm as `cloudflare-expression-lint`.
+A TypeScript parser, validator, linter, formatter, and auto-fixer for Cloudflare Rules Language expressions. It catches errors in Cloudflare expressions before they reach `terraform apply`. Published on npm as `cloudflare-expression-lint`.
 
 ## Project Structure
 - `src/lexer.ts` — Tokenizer (string → Token[]), supports raw strings (r"...")
-- `src/parser.ts` — Recursive-descent parser (Token[] → AST) with correct operator precedence
-- `src/validator.ts` — Semantic validator (AST → Diagnostic[]) with:
-  - Operator type checking (e.g., `contains` only on String)
-  - Deprecated field detection with replacement suggestions
-  - Phase-specific field availability
-  - Function context and usage limit validation
-  - Account-level zone plan filter checking
-  - Expression Builder compatibility checking
-  - Ambiguous operator precedence detection
-  - Operator style checking (C-like vs English notation)
-  - Expression whitespace detection
-  - Boolean comparison style hints
-  - Regex count limits, CIDR validation, wildcard pattern checks
-  - Named list name validation, header key casing warnings
-  - Template placeholder detection
+- `src/parser.ts` — Recursive-descent parser (Token[] → AST), tracks raw string flag
+- `src/validator.ts` — Semantic validator (AST → Diagnostic[]) with Builder compatibility checking, operator style, ambiguous precedence, deprecated fields, phase validation, function context/limits
+- `src/fixer.ts` — Auto-fixer (AST → AST) for Builder compatibility: wraps bare expressions, merges and-groups, De Morgan's rewrites, operator style normalization
+- `src/formatter.ts` — Prettifier (AST → multi-line string) that breaks on and/or boundaries, never mid-condition. Preserves raw strings.
+- `src/rewriter.ts` — YAML file rewriter that replaces expressions in-place using >- block scalars. Supports converting | and |- to >-
 - `src/yaml-scanner.ts` — YAML file scanner with configurable expression key and phase mappings, account-level path detection
 - `src/eslint-plugin.ts` — ESLint plugin adapter (optional, uses yaml-eslint-parser)
-- `src/cli.ts` — CLI entry point with --config, --expr-key, --phase-map, --warn-exit-code, --ignore-code flags
-- `src/types.ts` — All type definitions
-- `src/schemas/fields.ts` — Field registry (211+ fields with types, deprecation, phase availability, load balancing and DNS fields)
-- `src/schemas/functions.ts` — Function registry (25+ functions with context restrictions, including hash_in_range)
+- `src/cli.ts` — CLI with --fix, --prettify, --check, --convert-block-scalars, --config, --operator-style, --warn-exit-code flags
+- `src/types.ts` — All type definitions (StringLiteralNode has `raw` flag)
+- `src/schemas/fields.ts` — Field registry (211+ fields)
+- `src/schemas/functions.ts` — Function registry (25+ functions)
 - `src/schemas/operators.ts` — Operator definitions with type constraints
-- `src/__tests__/` — Test suite (418 tests across 13 files)
-- `scripts/sync-cloudflare-docs.ts` — Automated sync from cloudflare-docs repo (fields + functions)
+- `src/__tests__/` — Test suite (546 tests across 16 files)
+- `scripts/sync-cloudflare-docs.ts` — Automated sync from cloudflare-docs repo
 
 ## Commands
 - `npm test` — Run tests (vitest)
 - `npm run build` — Build TypeScript to dist/
 - `node dist/cli.js -e 'EXPRESSION'` — Validate a single expression
-- `node dist/cli.js config/**/*.yaml` — Scan YAML files
-- `node dist/cli.js --config .cf-expr-lint.json config/**/*.yaml` — Scan with custom mappings
+- `node dist/cli.js --fix -e 'EXPRESSION'` — Auto-fix a single expression
+- `node dist/cli.js --prettify -e 'EXPRESSION'` — Format a single expression
+- `node dist/cli.js --fix config/**/*.yaml` — Fix all YAML files
+- `node dist/cli.js --fix --check config/**/*.yaml` — Dry-run fix check
+- `node dist/cli.js --prettify --convert-block-scalars config/**/*.yaml` — Prettify and convert block scalars
+- `node dist/cli.js --prettify --check config/**/*.yaml` — Dry-run prettify check
 - `npm run sync-docs` — Check for Cloudflare field/function updates (dry run)
 - `npm run sync-docs:apply` — Apply field/function updates from Cloudflare docs
 
@@ -45,83 +39,38 @@ npm version patch    # bumps version, creates commit + tag
 git push && git push --tags   # triggers auto-publish via OIDC Trusted Publishing
 ```
 
-## How to Add a New Field
-Add an entry to the `FIELDS` array in `src/schemas/fields.ts`:
-```typescript
-{ name: 'cf.new_field', type: 'String' },
-// With deprecation:
-{ name: 'old.field', type: 'String', deprecated: true, replacement: 'new.field' },
-// With phase restriction:
-{ name: 'http.response.new', type: 'String', phases: ['http_response_headers_transform'] },
-```
-
-## How to Add a New Function
-Add an entry to the `FUNCTIONS` array in `src/schemas/functions.ts`:
-```typescript
-{
-  name: 'new_function',
-  params: [{ name: 'input', type: 'String' }],
-  returnType: 'String',
-  contexts: ['all'],  // or ['filter'], ['rewrite_url', 'rewrite_header'], etc.
-  maxPerExpression: 1, // optional usage limit
-},
-```
-
-## How to Customize YAML Scanning
-The scanner only detects the `expression` key by default. Custom expression keys and phase mappings can be added via:
-- CLI: `--expr-key key:type[:phase]` and `--phase-map yaml_key:phase`
-- Config file: `.cf-expr-lint.json` with `expressionKeys`, `phaseMappings`, `ignoreCodes`, `accountLevelPaths`
-- Programmatic API: `scanYaml(content, file, { expressionKeys: {...}, phaseMappings: {...} })`
-
-Custom mappings always merge with built-in defaults.
-
-## Config File Options
-```json
-{
-  "expressionKeys": { "my_key": { "type": "filter", "phaseHint": "http_request_firewall_custom" } },
-  "phaseMappings": { "my_waf_rules": "http_request_firewall_custom" },
-  "ignoreCodes": ["contains-placeholders", "parse-error-placeholder"],
-  "accountLevelPaths": ["config/account/"],
-  "operatorStyle": "off"
-}
-```
-
-## Expression Types
-- `filter` — Boolean expressions (the "when" condition in rules)
-- `rewrite_url` — URL rewrite value expressions (e.g., regex_replace result)
-- `rewrite_header` — Header value expressions
-- `redirect_target` — Redirect target URL expressions
-
 ## Cloudflare Expression Builder Format
 The Builder requires:
 - Single group: `(cond [and cond ...])` — conditions joined by `and` inside one `()`
 - Or-chain: `(group) or (group) or ...` — groups joined by `or` at top level
 - `not` is a toggle on individual conditions INSIDE groups: `(not A and not B)`
-- Each condition: comparison, in-expression, or boolean field
+- Each condition: bare comparison, in-expression, boolean field, or function (starts_with, ends_with)
+- Conditions inside and-groups must NOT be individually wrapped: `(A and B)` not `((A) and (B))`
 
-NOT Builder-compatible (with suggested rewrites):
+NOT Builder-compatible (with `--fix` auto-rewrites):
 - `(A) and (B)` → merge: `(A and B)`
 - `(A or B)` → split: `(A) or (B)`
 - `not (A)` → move not inside: `(not A)`
 - `not (A or B)` → De Morgan's: `(not A and not B)`
+- `not (A and B)` → De Morgan's: `(not A) or (not B)`
 - `((A) or (B))` → remove outer parens: `(A) or (B)`
-- `((A or B) and C)` → distribute: `(A and C) or (B and C)`
-- Functions/array unpacks are silently skipped (no Builder fix possible)
+- `((A) and (B))` → unwrap: `(A and B)`
+
+NOT auto-fixable (flagged as info only):
+- `((A or B) and C)` — would require distribution, too risky to auto-apply
+- Expressions with `lower()`, `len()` as comparison LHS — not representable in Builder
+
+## Key Constraints
+- NEVER add Indeed, Glassdoor, or any proprietary references to the GitHub repo (tests, docs, comments, git history)
+- Raw strings (r"...") must be preserved through all transformations (fix, prettify, rewrite)
+- The prettifier only breaks on and/or boundaries, never within a condition
+- The >- (folded, strip) block scalar is the correct YAML choice for expressions
+- `--check` mode must exit 1 if changes would be made, 0 if clean
 
 ## CI Integration
-The CLI supports exit codes for CI pipelines:
-- `--warn-exit-code 2` — exit 2 on warnings (use with GitLab `allow_failure: exit_codes: [2]`)
-- `--quiet` — only show errors
-- `--ignore-code <code>` — suppress specific diagnostic codes
-- `--operator-style <english|clike|off>` — operator style preference (default: english)
-
-## Key Design Decisions
-- Schemas are data, not code — field/function definitions are in simple arrays
-- Parser is custom (not using wirefilter WASM) for better error messages
-- ESLint is an optional peer dependency — the core tool is standalone
-- The validator produces errors for invalid expressions, warnings for likely issues, info for style suggestions
-- YAML scanner phase mappings are configurable — built-in defaults only include Cloudflare phase names and common shorthands
-- Account-level expressions are detected by file path pattern, not YAML key name
-- Template placeholder expressions (UPPER_CASE_VARS) are demoted from errors to warnings
-- Published via OIDC Trusted Publishing — no npm tokens needed
-- Weekly automated sync from cloudflare-docs repo for field/function updates
+```yaml
+# GitLab CI example
+- cf-expr-lint --warn-exit-code 2 --config .cf-expr-lint.json $(find config -name "*.yaml")
+- cf-expr-lint --fix --check --config .cf-expr-lint.json $(find config -name "*.yaml")
+- cf-expr-lint --prettify --check --config .cf-expr-lint.json $(find config -name "*.yaml")
+```

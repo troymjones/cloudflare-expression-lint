@@ -1,6 +1,6 @@
 # cloudflare-expression-lint
 
-A parser, validator, and linter for [Cloudflare Rules Language](https://developers.cloudflare.com/ruleset-engine/rules-language/) expressions with phase-aware field and function checking.
+A parser, validator, linter, formatter, and auto-fixer for [Cloudflare Rules Language](https://developers.cloudflare.com/ruleset-engine/rules-language/) expressions with phase-aware field and function checking.
 
 Catches errors **before** `terraform apply` — no API calls required.
 
@@ -9,11 +9,15 @@ Catches errors **before** `terraform apply` — no API calls required.
 - **Full expression parser** — lexer + recursive-descent parser for the Cloudflare wirefilter expression syntax
 - **211+ known fields** with type information
 - **Deprecated field detection** — warns on legacy fields like `ip.geoip.country` with replacement suggestions
-- **Phase-aware validation** — knows which fields are available in which Cloudflare phase (e.g., response fields only in response phases)
-- **Function context validation** — `regex_replace()` is only valid in rewrite/redirect contexts, not filter expressions
-- **Function usage limits** — enforces max 1 `regex_replace()` / `wildcard_replace()` per expression
-- **YAML scanner** — auto-detects expressions in YAML config files and infers the Cloudflare phase from context
-- **CLI tool** — validate expressions from the command line or CI/CD pipelines
+- **Phase-aware validation** — knows which fields are available in which Cloudflare phase
+- **Function context validation** — `regex_replace()` is only valid in rewrite/redirect contexts
+- **Expression Builder compatibility** — flags expressions that can't be loaded in the Cloudflare UI
+- **Auto-fixer** — `--fix` rewrites expressions for Builder compatibility (wraps bare expressions, merges and-groups, applies De Morgan's law, normalizes operators)
+- **Prettifier** — `--prettify` reformats long expressions across multiple lines using `>-` block scalars
+- **Operator style** — configurable preference for English (`eq`, `and`) vs C-like (`==`, `&&`)
+- **YAML scanner** — auto-detects expressions in YAML files and infers Cloudflare phase from context
+- **Raw string preservation** — `r"..."` prefixes survive formatting and fixing
+- **CLI tool** — validate, fix, and format expressions from the command line or CI/CD pipelines
 - **Programmatic API** — use as a library in your own tools
 
 ## Installation
@@ -60,6 +64,64 @@ cf-expr-lint -e 'http.response.code eq 200' -p http_request_firewall_custom
 echo '(ip.src.country in {"US" "JP"})' | cf-expr-lint --stdin
 ```
 
+### Auto-fix expressions
+
+```bash
+# Fix a single expression
+cf-expr-lint --fix -e 'not (http.cookie eq "a" or http.cookie eq "b")'
+# Output: (not http.cookie eq "a" and not http.cookie eq "b")
+
+# Fix all expressions in YAML files
+cf-expr-lint --fix --config .cf-expr-lint.json config/**/*.yaml
+
+# Dry-run — check if fixes are needed (exits non-zero if so)
+cf-expr-lint --fix --check config/**/*.yaml
+```
+
+The fixer applies these transformations:
+- Wrap bare expressions: `A eq B` → `(A eq B)`
+- Merge and-groups: `(A) and (B)` → `(A and B)`
+- Remove outer parens from or-chains: `((A) or (B))` → `(A) or (B)`
+- Wrap or-branches: `A or B` → `(A) or (B)`
+- Unwrap individually-wrapped and-conditions: `((A) and (B))` → `(A and B)`
+- De Morgan's law: `not (A or B)` → `(not A and not B)`
+- Operator style: `==` → `eq`, `<=` → `le`, `&&` → `and`, etc.
+
+### Prettify expressions
+
+```bash
+# Format a single expression
+cf-expr-lint --prettify -e '(http.host eq "test.com" and http.request.method eq "POST" and not ip.src in $blocklist)'
+
+# Prettify all YAML files (rewrites in-place with >- block scalars)
+cf-expr-lint --prettify --config .cf-expr-lint.json config/**/*.yaml
+
+# Also convert existing | and |- block scalars to >-
+cf-expr-lint --prettify --convert-block-scalars config/**/*.yaml
+
+# Custom max line width (default: 120)
+cf-expr-lint --prettify --max-width 100 config/**/*.yaml
+
+# Dry-run — check if formatting is needed
+cf-expr-lint --prettify --check config/**/*.yaml
+```
+
+Before:
+```yaml
+expression: (http.host eq "example.com" and http.request.method eq "POST" and not ip.src in $blocklist and http.request.uri.path eq "/api/webhook")
+```
+
+After:
+```yaml
+expression: >-
+  (
+    http.host eq "example.com"
+    and http.request.method eq "POST"
+    and not ip.src in $blocklist
+    and http.request.uri.path eq "/api/webhook"
+  )
+```
+
 ### Custom YAML key mappings (CLI)
 
 By default, the scanner only looks for the `expression` key (the standard
@@ -67,45 +129,33 @@ Cloudflare Terraform provider attribute). If your YAML uses other key
 names for expressions, tell the scanner about them:
 
 ```bash
-# Add custom expression keys and phase mappings via flags
 cf-expr-lint \
   --expr-key rewrite_expression:rewrite_url:http_request_transform \
   --expr-key source_url_expression:filter:http_request_dynamic_redirect \
   --phase-map waf_rules:http_request_firewall_custom \
-  --phase-map transform_rules:http_request_late_transform \
   config/**/*.yaml
 ```
 
-The `--expr-key` format is `key_name:expression_type[:phase]`.
-The `--phase-map` format is `yaml_parent_key:cloudflare_phase`.
-
-Both merge with the built-in defaults — your custom mappings extend them,
-they don't replace them.
-
 ### Config file
 
-For projects with many custom mappings, use a `.cf-expr-lint.json` config
-file in your project root (auto-detected) or specified with `--config`:
+For projects with many custom mappings, use a `.cf-expr-lint.json` config file:
 
 ```json
 {
   "expressionKeys": {
     "rewrite_expression": { "type": "rewrite_url", "phaseHint": "http_request_transform" },
-    "source_url_expression": { "type": "filter", "phaseHint": "http_request_dynamic_redirect" },
-    "target_url_expression": { "type": "redirect_target", "phaseHint": "http_request_dynamic_redirect" }
+    "source_url_expression": { "type": "filter", "phaseHint": "http_request_dynamic_redirect" }
   },
   "phaseMappings": {
     "waf_rules": "http_request_firewall_custom",
     "custom_rules": "http_request_firewall_custom",
-    "configuration_rules": "http_config_settings",
-    "transform_request_header_rules": "http_request_late_transform",
-    "transform_response_header_rules": "http_response_headers_transform",
-    "transform_url_rewrite_rules": "http_request_transform"
-  }
+    "ratelimit_rules": "http_ratelimit"
+  },
+  "accountLevelPaths": ["config/account/"],
+  "ignoreCodes": ["contains-placeholders"],
+  "operatorStyle": "english"
 }
 ```
-
-Then just run: `cf-expr-lint config/**/*.yaml`
 
 ### CLI Options
 
@@ -120,102 +170,82 @@ Then just run: `cf-expr-lint config/**/*.yaml`
 | `--phase-map` | | Add phase mapping: `yaml_key:phase` (repeatable) |
 | `--format` | `-f` | Output format: `text` (default), `json` |
 | `--quiet` | `-q` | Only show errors (suppress warnings) |
+| `--warn-exit-code` | | Exit code when warnings found (default: 0, use 2 for CI) |
+| `--ignore-code` | | Suppress a diagnostic code (repeatable) |
+| `--operator-style` | | Operator style: `english` (default), `clike`, `off` |
+| `--fix` | | Auto-fix expressions for Builder compatibility |
+| `--prettify` | | Reformat long expressions as multi-line `>-` block scalars |
+| `--convert-block-scalars` | | Convert `\|` and `\|-` to `>-` (use with `--prettify`) |
+| `--max-width` | | Max line width for `--prettify` (default: 120) |
+| `--check` | | Dry-run for `--fix` or `--prettify` (exits 1 if changes needed) |
 | `--help` | `-h` | Show help |
+
+## Expression Builder Compatibility
+
+The Cloudflare Expression Builder UI requires expressions in a specific format:
+
+**Compatible:**
+- Single group: `(A and B and C)`
+- Or-chain: `(A) or (B and C) or (D)`
+- Not toggle: `(not A and not B)`
+- Functions: `(starts_with(field, "val"))`, `(ends_with(field, "val"))`
+
+**Not compatible (with suggested rewrites):**
+- `(A) and (B)` → merge: `(A and B)`
+- `(A or B)` → split: `(A) or (B)`
+- `not (A)` → move inside: `(not A)`
+- `not (A or B)` → De Morgan's: `(not A and not B)`
+- `((A) or (B))` → remove outer: `(A) or (B)`
+- `((A) and (B))` → unwrap: `(A and B)`
+
+Use `--fix` to apply these automatically.
+
+## CI/CD Integration
+
+### GitLab CI
+
+```yaml
+lint-expressions:
+  stage: validate
+  image: node:20
+  script:
+    - npm install -g cloudflare-expression-lint@latest
+    - cf-expr-lint --warn-exit-code 2 --config .cf-expr-lint.json $(find config -name "*.yaml" -o -name "*.yml")
+    - cf-expr-lint --fix --check --config .cf-expr-lint.json $(find config -name "*.yaml" -o -name "*.yml")
+    - cf-expr-lint --prettify --check --config .cf-expr-lint.json $(find config -name "*.yaml" -o -name "*.yml")
+  allow_failure:
+    exit_codes: [2]
+```
+
+### GitHub Actions
+
+```yaml
+- name: Lint Cloudflare expressions
+  run: |
+    npm install -g cloudflare-expression-lint@latest
+    cf-expr-lint --warn-exit-code 2 config/**/*.yaml
+    cf-expr-lint --fix --check config/**/*.yaml
+    cf-expr-lint --prettify --check config/**/*.yaml
+```
 
 ## Programmatic API
 
 ```typescript
-import { validate, parse, tokenize } from 'cloudflare-expression-lint';
+import { validate, parse, fixExpression, formatExpression } from 'cloudflare-expression-lint';
 
-// Validate an expression
+// Validate
 const result = validate('(http.host eq "example.com")', {
   expressionType: 'filter',
   phase: 'http_request_firewall_custom',
 });
 
-console.log(result.valid);       // true
-console.log(result.diagnostics); // []
+// Auto-fix
+const fixed = fixExpression('not (http.cookie eq "a" or http.cookie eq "b")');
+console.log(fixed.expression); // '(not http.cookie eq "a" and not http.cookie eq "b")'
 
-// Validate with warnings
-const result2 = validate('(ip.geoip.country eq "US")', {
-  expressionType: 'filter',
-});
-// result2.valid === true (warnings don't make it invalid)
-// result2.diagnostics[0].code === 'deprecated-field'
-// result2.diagnostics[0].message === 'Field "ip.geoip.country" is deprecated. Use "ip.src.country" instead'
-
-// Parse to AST
-const ast = parse('http.host eq "example.com"');
-console.log(ast.kind); // 'Comparison'
-
-// Tokenize
-const tokens = tokenize('http.host eq "example.com"');
+// Prettify
+const pretty = formatExpression('(A and B and C)', { maxWidth: 40 });
 ```
-
-### YAML Scanner
-
-```typescript
-import { scanYaml } from 'cloudflare-expression-lint/yaml-scanner';
-import { readFileSync } from 'fs';
-
-const content = readFileSync('config/zones/example.yaml', 'utf-8');
-const result = scanYaml(content, 'example.yaml');
-
-for (const expr of result.expressions) {
-  if (!expr.result.valid) {
-    console.error(`${expr.file} → ${expr.yamlPath}: ${expr.result.diagnostics[0].message}`);
-  }
-}
-```
-
-## Supported Expression Syntax
-
-This tool supports the full Cloudflare Rules Language syntax:
-
-### Operators
-
-| Type | English | C-like |
-|------|---------|--------|
-| Equal | `eq` | `==` |
-| Not equal | `ne` | `!=` |
-| Less than | `lt` | `<` |
-| Less/equal | `le` | `<=` |
-| Greater than | `gt` | `>` |
-| Greater/equal | `ge` | `>=` |
-| Contains | `contains` | |
-| Wildcard | `wildcard` | |
-| Strict wildcard | `strict wildcard` | |
-| Regex match | `matches` | `~` |
-| Set membership | `in` | |
-| AND | `and` | `&&` |
-| OR | `or` | `\|\|` |
-| NOT | `not` | `!` |
-| XOR | `xor` | `^^` |
-
-### Value Types
-
-- **Strings**: `"value"` with `\"` and `\\` escaping
-- **Raw Strings**: `r"value"`, `r#"value"#` — no escape processing, useful for regex
-- **Integers**: `42`, `0`, `396507`
-- **Booleans**: `true`, `false`
-- **IP Addresses**: `1.2.3.4`, with CIDR (`1.2.3.0/24`) in `in` lists
-- **Named Lists**: `$list_name`, `$cf.malware`
-- **In-lists**: `{"US" "JP"}`, `{8000..8009}`, `{1.2.3.0/24}`
-
-### Functions
-
-All standard Cloudflare functions are supported, with context-aware validation:
-
-| Function | Available In |
-|----------|-------------|
-| `lower()`, `upper()`, `len()`, `starts_with()`, `ends_with()`, `contains()` | All contexts |
-| `concat()`, `substring()`, `url_decode()` | All contexts |
-| `any()`, `all()`, `has_key()`, `has_value()` | All contexts |
-| `lookup_json_string()`, `lookup_json_integer()` | All contexts |
-| `regex_replace()` | Rewrite, redirect (max 1 per expression) |
-| `wildcard_replace()` | Rewrite, redirect (max 1 per expression) |
-| `to_string()`, `encode_base64()`, `uuidv4()`, `sha256()` | Rewrite/transform only |
-| `cidr()`, `cidr6()` | Filter only |
 
 ## Diagnostic Codes
 
@@ -225,150 +255,23 @@ All standard Cloudflare functions are supported, with context-aware validation:
 | `unknown-field` | error | Field name not recognized |
 | `unknown-function` | error | Function name not recognized |
 | `field-not-in-phase` | error | Field not available in the specified Cloudflare phase |
-| `function-not-in-context` | error | Function not available in the expression context (filter vs rewrite) |
+| `function-not-in-context` | error | Function not available in the expression context |
 | `function-max-exceeded` | error | Function used more times than allowed |
-| `operator-type-mismatch` | error | Operator not compatible with field type (e.g., `contains` on IP) |
+| `operator-type-mismatch` | error | Operator not compatible with field type |
+| `invalid-cidr-mask` | error | CIDR mask out of valid range |
 | `deprecated-field` | warning | Field is deprecated; replacement suggested |
 | `expression-too-long` | warning | Expression exceeds 4096 character limit |
-| `header-key-not-lowercase` | warning | Header map key should be lowercase |
-| `invalid-list-name` | warning | Named list name doesn't match Cloudflare naming rules |
-| `invalid-cidr-mask` | error | CIDR mask out of valid range |
-| `invalid-wildcard-pattern` | warning | Wildcard contains `**` (prohibited) |
-| `empty-in-list` | warning | Empty `in {}` list will never match |
-| `too-many-regex` | warning | More than 64 regex patterns per expression |
 | `ambiguous-precedence` | warning | Mixed `and`/`or` without explicit grouping |
-| `expression-whitespace` | warning | Leading or trailing whitespace in expression |
-| `missing-zone-plan-filter` | warning | Account-level expression missing `and (cf.zone.plan eq "ENT")` |
-| `builder-incompatible` | info | Expression not in Cloudflare Expression Builder format |
-| `prefer-english-operator` | info | Suggests `eq` instead of `==`, `and` instead of `&&`, etc. |
+| `expression-whitespace` | warning | Leading or trailing whitespace |
+| `missing-zone-plan-filter` | warning | Account-level expression missing ENT suffix |
+| `empty-in-list` | warning | Empty `in {}` will never match |
+| `too-many-regex` | warning | More than 64 regex patterns |
+| `header-key-not-lowercase` | warning | Header map key should be lowercase |
+| `invalid-wildcard-pattern` | warning | Wildcard contains `**` |
+| `builder-incompatible` | info | Not in Expression Builder format |
+| `prefer-english-operator` | info | Suggests English notation (`eq`, `and`) |
+| `prefer-clike-operator` | info | Suggests C-like notation (`==`, `&&`) |
 | `prefer-bare-boolean` | info | Prefer `ssl` over `ssl == true` |
-
-## How Mappings Work
-
-The scanner needs to know two things about each YAML file:
-
-1. **Which keys contain expressions?** — By default, only `expression` (the Terraform attribute name).
-2. **What Cloudflare phase does an expression belong to?** — Inferred from YAML parent keys.
-
-Both are **extensible** — your custom mappings always merge with the built-in
-defaults. You never lose the defaults unless you explicitly opt out.
-
-### Programmatic API
-
-```typescript
-import { scanYaml } from 'cloudflare-expression-lint';
-
-const result = scanYaml(yamlContent, 'config.yaml', {
-  // These MERGE with the built-in defaults
-  expressionKeys: {
-    'rewrite_expression': { type: 'rewrite_url', phaseHint: 'http_request_transform' },
-    'source_url_expression': { type: 'filter', phaseHint: 'http_request_dynamic_redirect' },
-  },
-  phaseMappings: {
-    'waf_rules': 'http_request_firewall_custom',
-    'my_transform_rules': 'http_request_transform',
-  },
-});
-
-// Inspect defaults
-import { getDefaultExpressionKeys, getDefaultPhaseMappings } from 'cloudflare-expression-lint';
-console.log(getDefaultExpressionKeys()); // { expression: { type: 'filter' } }
-console.log(getDefaultPhaseMappings());  // { cache_rules: '...', http_request_firewall_custom: '...', ... }
-```
-
-### Built-in Phase Mappings
-
-The defaults include all Cloudflare phase names as self-mappings plus common shorthands:
-
-| YAML Key | Phase |
-|----------|-------|
-| `http_request_firewall_custom` | `http_request_firewall_custom` |
-| `http_ratelimit` | `http_ratelimit` |
-| `http_request_cache_settings` | `http_request_cache_settings` |
-| `http_request_transform` | `http_request_transform` |
-| `http_request_late_transform` | `http_request_late_transform` |
-| `http_response_headers_transform` | `http_response_headers_transform` |
-| `cache_rules` | `http_request_cache_settings` |
-| `rate_limit_rules` | `http_ratelimit` |
-| `single_redirects` | `http_request_dynamic_redirect` |
-| `origin_rules` | `http_request_origin` |
-
-If you need to **replace** all defaults instead of merging, pass
-`replaceExpressionKeys: true` or `replacePhaseMappings: true`.
-
-### ESLint Plugin
-
-```javascript
-// eslint.config.js (flat config)
-import cfExprLint from 'cloudflare-expression-lint/eslint-plugin';
-
-export default [
-  {
-    files: ['config/**/*.yaml'],
-    plugins: { 'cf-expr': cfExprLint },
-    rules: {
-      'cf-expr/validate-expression': ['error', {
-        // Custom mappings (merged with defaults)
-        customKeyMappings: {
-          'rewrite_expression': 'rewrite_url',
-          'source_url_expression': 'filter',
-        },
-        customPhaseMappings: {
-          'waf_rules': 'http_request_firewall_custom',
-        },
-      }],
-    },
-  },
-];
-```
-
-## CI/CD Integration
-
-### GitLab CI
-
-```yaml
-lint-expressions:
-  stage: validate
-  script:
-    - npx cloudflare-expression-lint config/**/*.yaml
-  allow_failure: false
-```
-
-### GitHub Actions
-
-```yaml
-- name: Lint Cloudflare expressions
-  run: npx cloudflare-expression-lint config/**/*.yaml
-```
-
-### Pre-commit Hook
-
-```bash
-#!/bin/sh
-npx cloudflare-expression-lint $(git diff --cached --name-only --diff-filter=ACM -- '*.yaml' '*.yml')
-```
-
-## Extending the Schema
-
-The field and function registries are defined in TypeScript files under `src/schemas/`:
-
-- **`fields.ts`** — All known fields with types, deprecation status, and phase availability
-- **`functions.ts`** — All known functions with parameter types, return types, context restrictions, and usage limits
-- **`operators.ts`** — All comparison and logical operators with type constraints
-
-To add a new field or function, edit the relevant schema file and add a new entry to the array. The tool will automatically pick it up.
-
-## Publishing
-
-Publish to npm automatically by bumping the version:
-
-```bash
-npm version patch    # or minor / major
-git push && git push --tags
-```
-
-Pushing a `v*` tag triggers the GitHub Actions workflow which builds,
-tests, and publishes to npm via OIDC Trusted Publishing (no tokens needed).
 
 ## Architecture
 
@@ -377,15 +280,18 @@ src/
 ├── lexer.ts          # Tokenizer: string → Token[]
 ├── parser.ts         # Parser: Token[] → AST (recursive descent)
 ├── validator.ts      # Validator: AST → Diagnostic[] (semantic analysis)
+├── fixer.ts          # Auto-fixer: AST → AST (Builder compatibility transforms)
+├── formatter.ts      # Prettifier: AST → multi-line string
+├── rewriter.ts       # YAML rewriter: replaces expressions in files
 ├── yaml-scanner.ts   # YAML file scanner with configurable phase inference
 ├── eslint-plugin.ts  # ESLint plugin adapter (optional)
-├── cli.ts            # CLI entry point with config file support
+├── cli.ts            # CLI entry point
 ├── types.ts          # Shared type definitions
 ├── index.ts          # Public API exports
 └── schemas/
-    ├── fields.ts     # 211+ field definitions with deprecation tracking
-    ├── functions.ts  # 25+ function definitions with context restrictions
-    └── operators.ts  # Operator definitions with type constraints
+    ├── fields.ts     # 211+ field definitions
+    ├── functions.ts  # 25+ function definitions
+    └── operators.ts  # Operator type constraints
 ```
 
 ## License

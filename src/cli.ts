@@ -48,6 +48,7 @@ interface CLIOptions {
   operatorStyle: OperatorStyle;
   prettify: boolean;
   fix: boolean;
+  check: boolean;
   convertBlockScalars: boolean;
   maxWidth: number;
   help: boolean;
@@ -67,6 +68,7 @@ function parseArgs(argv: string[]): CLIOptions {
     operatorStyle: 'english',
     prettify: false,
     fix: false,
+    check: false,
     convertBlockScalars: false,
     maxWidth: 120,
     help: false,
@@ -149,6 +151,9 @@ function parseArgs(argv: string[]): CLIOptions {
         break;
       case '--convert-block-scalars':
         opts.convertBlockScalars = true;
+        break;
+      case '--check':
+        opts.check = true;
         break;
       case '--max-width':
         opts.maxWidth = parseInt(argv[++i], 10);
@@ -291,6 +296,8 @@ Options:
                              >- (folded block scalar) syntax.
   --convert-block-scalars    Convert existing | and |- block scalars to >-.
                              Use with --prettify. Short expressions become inline.
+  --check                    Dry-run for --fix or --prettify. Exits non-zero if
+                             any changes would be made, without modifying files.
   --max-width <n>            Max line width for --prettify (default: 120).
   --help, -h                 Show this help
 
@@ -478,9 +485,20 @@ async function main(): Promise<void> {
       }
 
       if (fileChanged) {
-        writeFileSync(absPath, modified, 'utf-8');
+        if (!opts.check) {
+          writeFileSync(absPath, modified, 'utf-8');
+        }
         totalFiles++;
       }
+    }
+
+    if (opts.check) {
+      if (totalFixed > 0) {
+        console.log(`\n${totalFixed} expressions in ${totalFiles} files need fixing`);
+        process.exit(1);
+      }
+      console.log('\nAll expressions are already fixed');
+      process.exit(0);
     }
 
     console.log(`\nFixed ${totalFixed} expressions in ${totalFiles} files`);
@@ -511,11 +529,22 @@ async function main(): Promise<void> {
       });
 
       if (result.count > 0) {
-        writeFileSync(absPath, result.content, 'utf-8');
+        if (!opts.check) {
+          writeFileSync(absPath, result.content, 'utf-8');
+        }
         totalFiles++;
         totalFormatted += result.count;
-        console.log(`  ✓ ${file}`);
+        if (!opts.check) console.log(`  ✓ ${file}`);
       }
+    }
+
+    if (opts.check) {
+      if (totalFormatted > 0) {
+        console.log(`\n${totalFormatted} expressions in ${totalFiles} files need formatting`);
+        process.exit(1);
+      }
+      console.log('\nAll expressions are already formatted');
+      process.exit(0);
     }
 
     console.log(`\nFormatted ${totalFormatted} expressions in ${totalFiles} files`);
