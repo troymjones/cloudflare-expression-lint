@@ -114,6 +114,69 @@ describe('findExpressionLocation', () => {
     expect(loc1).not.toBeNull();
     expect(content.substring(loc1!.lineEnd).trimStart()).toMatch(/^enabled: true/);
   });
+
+  it('finds inline expression in CRLF file', () => {
+    const content = '    expression: (http.host eq "test.com")\r\n    enabled: true\r\n';
+    const loc = findExpressionLocation(content, '(http.host eq "test.com")');
+    expect(loc).not.toBeNull();
+    expect(loc!.key).toBe('expression:');
+    // lineEnd should include the \r so substring replacement works
+    const replaced = content.substring(0, loc!.lineStart) + '    expression: REPLACED\r\n' + content.substring(loc!.lineEnd);
+    expect(replaced).toContain('enabled: true');
+  });
+
+  it('finds block scalar expression in CRLF file', () => {
+    const content = [
+      '    expression: >-',
+      '      (http.host eq "test.com"',
+      '      and http.request.method eq "POST")',
+      '    enabled: true',
+      '',
+    ].join('\r\n');
+    const loc = findExpressionLocation(content, '(http.host eq "test.com" and http.request.method eq "POST")');
+    expect(loc).not.toBeNull();
+    expect(loc!.isBlockScalar).toBe('>-');
+  });
+
+  it('finds double-quoted expression with escaped quotes', () => {
+    const content = '    expression: "(http.host eq \\"secure.example.com\\")"\n    enabled: true\n';
+    const loc = findExpressionLocation(content, '(http.host eq "secure.example.com")');
+    expect(loc).not.toBeNull();
+    expect(loc!.key).toBe('expression:');
+  });
+
+  it('finds double-quoted expression with escaped quotes in CRLF file', () => {
+    const content = '    expression: "(http.host eq \\"secure.example.com\\")"\r\n    enabled: true\r\n';
+    const loc = findExpressionLocation(content, '(http.host eq "secure.example.com")');
+    expect(loc).not.toBeNull();
+  });
+
+  it('finds plain multi-line value (no block scalar indicator)', () => {
+    const content = [
+      '      expression: (http.host eq "test.com" and http.user_agent',
+      '        eq "SomeBot/1.0")',
+      '      enabled: true',
+      '',
+    ].join('\n');
+    const loc = findExpressionLocation(content, '(http.host eq "test.com" and http.user_agent eq "SomeBot/1.0")');
+    expect(loc).not.toBeNull();
+    expect(loc!.isBlockScalar).toBe('plain-multiline');
+    // lineEnd should span past the continuation line
+    const remaining = content.substring(loc!.lineEnd);
+    expect(remaining).toMatch(/^\s*enabled: true/);
+  });
+
+  it('finds plain multi-line value in CRLF file', () => {
+    const content = [
+      '      expression: (http.host eq "test.com" and http.user_agent',
+      '        eq "SomeBot/1.0")',
+      '      enabled: true',
+      '',
+    ].join('\r\n');
+    const loc = findExpressionLocation(content, '(http.host eq "test.com" and http.user_agent eq "SomeBot/1.0")');
+    expect(loc).not.toBeNull();
+    expect(loc!.isBlockScalar).toBe('plain-multiline');
+  });
 });
 
 describe('rewriteExpressions', () => {
@@ -563,5 +626,101 @@ describe('rewriteExpressions with replacements', () => {
     });
     expect(result.content).toContain('>-');
     expect(result.count).toBe(1);
+  });
+
+  it('applies replacement to double-quoted expression with escaped quotes', () => {
+    const content = '    expression: "(http.host eq \\"test.com\\") and (cf.zone.plan eq \\"ENT\\")"\n    enabled: true\n';
+    const expressions = [{ expression: '(http.host eq "test.com") and (cf.zone.plan eq "ENT")' }];
+    const canonical = '(http.host eq "test.com") and (cf.zone.plan eq "ENT")';
+    const replacements = new Map([[canonical, '(http.host eq "test.com" and cf.zone.plan eq "ENT")']]);
+
+    const result = rewriteExpressions(content, expressions, {
+      maxWidth: 120,
+      convertBlockScalars: true,
+      replacements,
+    });
+    expect(result.count).toBe(1);
+    expect(result.content).toContain('(http.host eq "test.com" and cf.zone.plan eq "ENT")');
+    // Should not have the escaped quotes anymore (now >- or inline without quotes)
+    expect(result.content).not.toContain('\\"');
+  });
+
+  it('applies replacement to plain multi-line value', () => {
+    const content = [
+      '      expression: ((http.host eq "test.com") and (http.user_agent',
+      '        eq "SomeBot/1.0"))',
+      '      enabled: true',
+      '',
+    ].join('\n');
+    const expr = '((http.host eq "test.com") and (http.user_agent eq "SomeBot/1.0"))';
+    const expressions = [{ expression: expr }];
+    const canonical = '((http.host eq "test.com") and (http.user_agent eq "SomeBot/1.0"))';
+    const replacements = new Map([[canonical, '(http.host eq "test.com" and http.user_agent eq "SomeBot/1.0")']]);
+
+    const result = rewriteExpressions(content, expressions, {
+      maxWidth: 120,
+      convertBlockScalars: true,
+      replacements,
+    });
+    expect(result.count).toBe(1);
+    expect(result.content).toContain('http.host eq "test.com" and http.user_agent eq "SomeBot/1.0"');
+  });
+
+  it('applies replacement in CRLF file and converges', () => {
+    const content = [
+      '    expression: (A) and (B)',
+      '    enabled: true',
+      '',
+    ].join('\r\n');
+    const expressions = [{ expression: '(A) and (B)' }];
+    const replacements = new Map([['(A) and (B)', '(A and B)']]);
+
+    const result = rewriteExpressions(content, expressions, {
+      maxWidth: 120,
+      convertBlockScalars: true,
+      replacements,
+    });
+    expect(result.count).toBe(1);
+    expect(result.content).toContain('(A and B)');
+
+    // Re-run prettify on the result - should be stable
+    const prettifyResult = rewriteExpressions(result.content, [{ expression: '(A and B)' }], {
+      maxWidth: 120,
+      convertBlockScalars: true,
+    });
+    expect(prettifyResult.count).toBe(0);
+  });
+
+  it('converges when fix changes expression in >- block', () => {
+    // Simulates: expression in >- block needs fixing, then prettify runs
+    const content = [
+      '    expression: >-',
+      '      (http.host eq "test.com")',
+      '      and (http.request.method eq "POST")',
+      '    enabled: true',
+      '',
+    ].join('\n');
+    const originalExpr = '(http.host eq "test.com") and (http.request.method eq "POST")';
+    const fixedExpr = '(http.host eq "test.com" and http.request.method eq "POST")';
+    const expressions = [{ expression: originalExpr }];
+    const canonical = '(http.host eq "test.com") and (http.request.method eq "POST")';
+    const replacements = new Map([[canonical, fixedExpr]]);
+
+    // Step 1: --fix
+    const fixResult = rewriteExpressions(content, expressions, {
+      maxWidth: 120,
+      convertBlockScalars: true,
+      replacements,
+    });
+    expect(fixResult.count).toBe(1);
+    expect(fixResult.content).toContain('http.host eq "test.com" and http.request.method eq "POST"');
+
+    // Step 2: --prettify on the result
+    const prettifyResult = rewriteExpressions(fixResult.content, [{ expression: fixedExpr }], {
+      maxWidth: 120,
+      convertBlockScalars: true,
+    });
+    expect(prettifyResult.count).toBe(0);
+    expect(prettifyResult.content).toBe(fixResult.content);
   });
 });
