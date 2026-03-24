@@ -267,3 +267,101 @@ describe('rewriteExpressions', () => {
     expect(narrow.content).toContain('expression: >-');
   });
 });
+
+describe('convertBlockScalars', () => {
+  it('converts | to >- for long expression', () => {
+    const content = [
+      '    expression: |',
+      '      (http.host eq "test.com"',
+      '      and http.request.method eq "POST"',
+      '      and http.request.uri.path eq "/api")',
+      '    enabled: true',
+      '',
+    ].join('\n');
+
+    const expressions = [
+      { expression: '(http.host eq "test.com" and http.request.method eq "POST" and http.request.uri.path eq "/api")' },
+    ];
+
+    const result = rewriteExpressions(content, expressions, { convertBlockScalars: true, maxWidth: 80 });
+    expect(result.count).toBe(1);
+    expect(result.content).toContain('expression: >-');
+    expect(result.content).not.toContain('expression: |');
+    expect(result.content).toContain('\n    enabled: true');
+  });
+
+  it('converts |- to >- for long expression', () => {
+    const content = [
+      '    expression: |-',
+      '      (http.host eq "test.com"',
+      '      and http.request.method eq "POST"',
+      '      and http.request.uri.path eq "/api/v1/webhook/endpoint")',
+      '    enabled: true',
+      '',
+    ].join('\n');
+
+    const expressions = [
+      { expression: '(http.host eq "test.com" and http.request.method eq "POST" and http.request.uri.path eq "/api/v1/webhook/endpoint")' },
+    ];
+
+    const result = rewriteExpressions(content, expressions, { convertBlockScalars: true, maxWidth: 80 });
+    expect(result.count).toBe(1);
+    expect(result.content).toContain('expression: >-');
+    expect(result.content).not.toContain('expression: |-');
+  });
+
+  it('converts short | expression to inline', () => {
+    const content = [
+      '    expression: |',
+      '      (http.host eq "test.com")',
+      '    enabled: true',
+      '',
+    ].join('\n');
+
+    const expressions = [
+      { expression: '(http.host eq "test.com")' },
+    ];
+
+    const result = rewriteExpressions(content, expressions, { convertBlockScalars: true, maxWidth: 120 });
+    expect(result.count).toBe(1);
+    // Short expression should become inline, not >-
+    expect(result.content).toContain('expression: (http.host eq "test.com")');
+    expect(result.content).not.toContain('expression: |');
+    expect(result.content).toContain('\n    enabled: true');
+  });
+
+  it('does not change expressions already using >-', () => {
+    const content = [
+      '    expression: >-',
+      '      (http.host eq "test.com"',
+      '      and http.request.method eq "POST")',
+      '    enabled: true',
+      '',
+    ].join('\n');
+
+    const expressions = [
+      { expression: '(http.host eq "test.com" and http.request.method eq "POST")' },
+    ];
+
+    const result = rewriteExpressions(content, expressions, { convertBlockScalars: true, maxWidth: 120 });
+    // Already >- and formatter wouldn't change the content — no modification needed
+    expect(result.count).toBe(0);
+  });
+
+  it('does not convert | when flag is not set', () => {
+    const content = [
+      '    expression: |',
+      '      (http.host eq "test.com")',
+      '    enabled: true',
+      '',
+    ].join('\n');
+
+    const expressions = [
+      { expression: '(http.host eq "test.com")' },
+    ];
+
+    const result = rewriteExpressions(content, expressions, { maxWidth: 120 });
+    expect(result.count).toBe(0);
+    expect(result.content).toBe(content);
+  });
+});

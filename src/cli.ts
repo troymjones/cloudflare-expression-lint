@@ -48,6 +48,7 @@ interface CLIOptions {
   operatorStyle: OperatorStyle;
   prettify: boolean;
   fix: boolean;
+  convertBlockScalars: boolean;
   maxWidth: number;
   help: boolean;
 }
@@ -66,6 +67,7 @@ function parseArgs(argv: string[]): CLIOptions {
     operatorStyle: 'english',
     prettify: false,
     fix: false,
+    convertBlockScalars: false,
     maxWidth: 120,
     help: false,
   };
@@ -144,6 +146,9 @@ function parseArgs(argv: string[]): CLIOptions {
         break;
       case '--fix':
         opts.fix = true;
+        break;
+      case '--convert-block-scalars':
+        opts.convertBlockScalars = true;
         break;
       case '--max-width':
         opts.maxWidth = parseInt(argv[++i], 10);
@@ -284,6 +289,8 @@ Options:
   --prettify                 Reformat expressions in YAML files for readability.
                              Breaks long expressions across multiple lines using
                              >- (folded block scalar) syntax.
+  --convert-block-scalars    Convert existing | and |- block scalars to >-.
+                             Use with --prettify. Short expressions become inline.
   --max-width <n>            Max line width for --prettify (default: 120).
   --help, -h                 Show this help
 
@@ -498,7 +505,10 @@ async function main(): Promise<void> {
       const scanResult = scanYaml(content, file, scannerOpts);
       if (scanResult.parseError || scanResult.expressions.length === 0) continue;
 
-      const result = rewriteExpressions(content, scanResult.expressions, { maxWidth: opts.maxWidth });
+      const result = rewriteExpressions(content, scanResult.expressions, {
+        maxWidth: opts.maxWidth,
+        convertBlockScalars: opts.convertBlockScalars,
+      });
 
       if (result.count > 0) {
         writeFileSync(absPath, result.content, 'utf-8');

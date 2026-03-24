@@ -7,6 +7,11 @@
 
 import { formatExpression, type FormatOptions } from './formatter.js';
 
+export interface RewriteOptions extends FormatOptions {
+  /** Convert existing | and |- block scalars to >- */
+  convertBlockScalars?: boolean;
+}
+
 export interface RewriteResult {
   /** The modified YAML content */
   content: string;
@@ -27,7 +32,7 @@ const EXPRESSION_KEYS = new Set([
 export function rewriteExpressions(
   content: string,
   expressions: { expression: string }[],
-  options?: FormatOptions,
+  options?: RewriteOptions,
 ): RewriteResult {
   let modified = content;
   let count = 0;
@@ -39,10 +44,11 @@ export function rewriteExpressions(
 
   for (const expr of uniqueExprs) {
     const formatted = formatExpression(expr.expression, options);
+    const isMultiLine = formatted.includes('\n');
 
-    // Skip if no change needed or not multi-line
-    if (formatted === expr.expression.trim()) continue;
-    if (!formatted.includes('\n')) continue;
+    // Skip if no change needed and not converting block scalars
+    if (formatted === expr.expression.trim() && !options?.convertBlockScalars) continue;
+    if (!isMultiLine && !options?.convertBlockScalars) continue;
 
     // Find all occurrences in the file (same expression may appear multiple times)
     let searchFrom = modified.length;
@@ -50,8 +56,21 @@ export function rewriteExpressions(
       const location = findExpressionLocation(modified, expr.expression, searchFrom);
       if (!location) break;
 
-      const { lineStart, lineEnd, indent, key } = location;
+      const { lineStart, lineEnd, indent, key, isBlockScalar } = location;
       searchFrom = lineStart; // next search ends before this match
+
+      // Skip if already >- and content hasn't changed
+      if (isBlockScalar === '>-' && formatted === expr.expression.trim() && !isMultiLine) continue;
+      // Skip if inline, not multi-line, and content hasn't changed
+      if (!isBlockScalar && !isMultiLine && formatted === expr.expression.trim()) continue;
+      // When converting block scalars, always rewrite |/|- to >-
+      if (isBlockScalar && isBlockScalar !== '>-' && !isMultiLine && formatted === expr.expression.trim()) {
+        // Short expression in |/|- — convert to inline
+        const replacement = `${indent}${key} ${formatted}\n`;
+        modified = modified.substring(0, lineStart) + replacement + modified.substring(lineEnd);
+        count++;
+        continue;
+      }
 
       // Build the >- replacement with proper indentation
       const exprIndent = indent + '  ';
@@ -85,6 +104,8 @@ export function findExpressionLocation(
   content: string, expression: string, beforeOffset?: number,
 ): {
   lineStart: number; lineEnd: number; indent: string; key: string;
+  /** The block scalar type if the expression uses one, or null for inline */
+  isBlockScalar?: string;
 } | null {
   const trimmed = expression.trim();
   const lines = content.split('\n');
@@ -136,7 +157,7 @@ export function findExpressionLocation(
       const blockContent = lines.slice(i + 1, j).map(l => l.trim()).join(' ').trim();
       if (blockContent === trimmed) {
         const blockEnd = j < lines.length ? offsets[j] : content.length;
-        return { lineStart: offsets[i], lineEnd: blockEnd, indent, key: `${key}:` };
+        return { lineStart: offsets[i], lineEnd: blockEnd, indent, key: `${key}:`, isBlockScalar: value.trim() };
       }
     }
   }
