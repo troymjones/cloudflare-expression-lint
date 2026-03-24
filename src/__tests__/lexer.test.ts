@@ -28,6 +28,26 @@ describe('Lexer', () => {
       expect(tokens).toEqual([[TokenType.String, 'path\\to']]);
     });
 
+    it('preserves \\d regex escape in strings', () => {
+      const tokens = tv('"^/test/\\d{1,10}/foo"');
+      expect(tokens).toEqual([[TokenType.String, '^/test/\\d{1,10}/foo']]);
+    });
+
+    it('preserves \\. regex escape in strings', () => {
+      const tokens = tv('"Chrome/13[0-9]\\..*"');
+      expect(tokens).toEqual([[TokenType.String, 'Chrome/13[0-9]\\..*']]);
+    });
+
+    it('preserves \\& in strings', () => {
+      const tokens = tv('"q=-[A-z0-9]{12,}\\&"');
+      expect(tokens).toEqual([[TokenType.String, 'q=-[A-z0-9]{12,}\\&']]);
+    });
+
+    it('preserves \\w \\s \\b and other regex classes', () => {
+      const tokens = tv('"\\w+\\s\\b"');
+      expect(tokens).toEqual([[TokenType.String, '\\w+\\s\\b']]);
+    });
+
     it('tokenizes empty strings', () => {
       const tokens = tv('""');
       expect(tokens).toEqual([[TokenType.String, '']]);
