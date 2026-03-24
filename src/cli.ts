@@ -27,6 +27,7 @@ import { glob } from 'glob';
 import { validate } from './validator.js';
 import { formatExpression } from './formatter.js';
 import { rewriteExpressions } from './rewriter.js';
+import { fixExpression } from './fixer.js';
 import { scanYaml } from './yaml-scanner.js';
 import type { ScannerOptions, ExpressionKeyMapping } from './yaml-scanner.js';
 import type { ValidationContext, ExpressionType, OperatorStyle, Diagnostic } from './types.js';
@@ -46,6 +47,7 @@ interface CLIOptions {
   ignoreCodes: string[];
   operatorStyle: OperatorStyle;
   prettify: boolean;
+  fix: boolean;
   maxWidth: number;
   help: boolean;
 }
@@ -63,6 +65,7 @@ function parseArgs(argv: string[]): CLIOptions {
     ignoreCodes: [],
     operatorStyle: 'english',
     prettify: false,
+    fix: false,
     maxWidth: 120,
     help: false,
   };
@@ -138,6 +141,9 @@ function parseArgs(argv: string[]): CLIOptions {
         break;
       case '--prettify':
         opts.prettify = true;
+        break;
+      case '--fix':
+        opts.fix = true;
         break;
       case '--max-width':
         opts.maxWidth = parseInt(argv[++i], 10);
@@ -272,6 +278,9 @@ Options:
                              Also configurable via "ignoreCodes" in config file.
   --operator-style <style>   Operator style: english (default), clike, off.
                              Also configurable via "operatorStyle" in config file.
+  --fix                      Auto-fix expressions in YAML files for Builder
+                             compatibility (wrap bare exprs, merge and-groups,
+                             De Morgan's rewrites, operator style).
   --prettify                 Reformat expressions in YAML files for readability.
                              Breaks long expressions across multiple lines using
                              >- (folded block scalar) syntax.
@@ -354,6 +363,15 @@ async function main(): Promise<void> {
       expr = opts.expression!;
     }
 
+    if (opts.fix) {
+      const result = fixExpression(expr, { operatorStyle: opts.operatorStyle });
+      console.log(result.expression);
+      if (result.fixes.length > 0) {
+        console.error(`Fixes: ${result.fixes.join(', ')}`);
+      }
+      process.exit(0);
+    }
+
     if (opts.prettify) {
       console.log(formatExpression(expr, { maxWidth: opts.maxWidth }));
       process.exit(0);
@@ -409,6 +427,57 @@ async function main(): Promise<void> {
   if (expandedFiles.length === 0) {
     console.error('No files matched the given patterns');
     process.exit(1);
+  }
+
+  // ── Fix mode ────────────────────────────────────────────────────
+  if (opts.fix) {
+    let totalFixed = 0;
+    let totalFiles = 0;
+
+    for (const file of expandedFiles) {
+      const absPath = resolve(file);
+      let content: string;
+      try {
+        content = readFileSync(absPath, 'utf-8');
+      } catch (err) {
+        console.error(`Error reading ${file}: ${err instanceof Error ? err.message : err}`);
+        continue;
+      }
+
+      const scanResult = scanYaml(content, file, scannerOpts);
+      if (scanResult.parseError || scanResult.expressions.length === 0) continue;
+
+      let modified = content;
+      let fileChanged = false;
+
+      for (const expr of scanResult.expressions) {
+        const result = fixExpression(expr.expression, { operatorStyle: opts.operatorStyle });
+        if (!result.changed) continue;
+
+        // Replace the old expression with the fixed one in the file content
+        const escaped = expr.expression.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const re = new RegExp(escaped.replace(/\s+/g, '\\s+'));
+        const newContent = modified.replace(re, result.expression);
+        if (newContent !== modified) {
+          modified = newContent;
+          fileChanged = true;
+          totalFixed++;
+          if (!opts.quiet) {
+            for (const fix of result.fixes) {
+              console.log(`  ${file}: ${fix}`);
+            }
+          }
+        }
+      }
+
+      if (fileChanged) {
+        writeFileSync(absPath, modified, 'utf-8');
+        totalFiles++;
+      }
+    }
+
+    console.log(`\nFixed ${totalFixed} expressions in ${totalFiles} files`);
+    process.exit(0);
   }
 
   // ── Prettify mode ────────────────────────────────────────────────

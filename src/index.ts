@@ -10,6 +10,8 @@ export { parse } from './parser.js';
 export { validate } from './validator.js';
 export { formatExpression } from './formatter.js';
 export type { FormatOptions } from './formatter.js';
+export { fixExpression } from './fixer.js';
+export type { FixOptions, FixResult } from './fixer.js';
 
 // Re-export types
 export type {
