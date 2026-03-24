@@ -397,4 +397,28 @@ describe('Expression Formatter', () => {
       expect(result).toContain('"');
     });
   });
+
+  describe('nested group breaking', () => {
+    it('breaks double-parens group containing or-chain', () => {
+      const expr = '((http.host eq "a.example.com" and http.request.uri.path eq "/very-long-path/that-exceeds-width") or (http.host eq "b.example.com" and http.request.uri.path eq "/another-long-path"))';
+      const result = formatExpression(expr, { maxWidth: 120 });
+      expect(result).toContain('\n');
+      const maxLine = Math.max(...result.split('\n').map(l => l.length));
+      expect(maxLine).toBeLessThanOrEqual(120);
+    });
+
+    it('breaks group containing not with long operand', () => {
+      const expr = '(not (http.host eq "a.example.com" and http.request.method eq "POST" and http.request.uri.path eq "/api/v1/very-long-endpoint"))';
+      const result = formatExpression(expr, { maxWidth: 80 });
+      expect(result).toContain('\n');
+      const maxLine = Math.max(...result.split('\n').map(l => l.length));
+      expect(maxLine).toBeLessThanOrEqual(80);
+    });
+
+    it('does not break nested group that fits within maxWidth', () => {
+      const expr = '((http.host eq "a.com"))';
+      const result = formatExpression(expr, { maxWidth: 120 });
+      expect(result).not.toContain('\n');
+    });
+  });
 });

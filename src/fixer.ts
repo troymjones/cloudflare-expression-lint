@@ -203,10 +203,19 @@ function fixBuilderStructure(node: ASTNode, fixes: string[]): ASTNode {
     const hasGroups = leaves.some(l => l.kind === 'Group');
     if (hasGroups) {
       // (A) and (B) → (A and B): unwrap inner groups and merge
-      const unwrapped = leaves.map(l => stripGroup(l));
-      if (unwrapped.every(l => isSimpleCondition(l) || l.kind === 'Not')) {
+      // Also flatten nested and-chains: ((A and B)) and (C) → (A and B and C)
+      const allLeaves: ASTNode[] = [];
+      for (const leaf of leaves) {
+        const stripped = stripGroup(leaf);
+        if (stripped.kind === 'Logical' && isAllOp(stripped, 'and')) {
+          collectChain(stripped, 'and', allLeaves);
+        } else {
+          allLeaves.push(stripped);
+        }
+      }
+      if (allLeaves.every(l => isSimpleCondition(l) || l.kind === 'Not')) {
         fixes.push('merge (A) and (B) → (A and B)');
-        return buildGroup(buildAndChain(unwrapped));
+        return buildGroup(buildAndChain(allLeaves));
       }
     } else {
       // Bare A and B → (A and B)
@@ -327,7 +336,8 @@ function collectChain(node: ASTNode, op: string, branches: ASTNode[]): void {
 }
 
 function stripGroup(node: ASTNode): ASTNode {
-  return node.kind === 'Group' ? node.expression : node;
+  while (node.kind === 'Group') node = node.expression;
+  return node;
 }
 
 function wrapNot(node: ASTNode): ASTNode {

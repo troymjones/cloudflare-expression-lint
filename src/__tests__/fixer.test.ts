@@ -68,6 +68,24 @@ describe('Auto-fixer', () => {
         '(http.host eq "test.com" and not ip.src in $blocklist)'
       );
     });
+
+    it('strips double parens and merges: ((A and B)) and (C) → (A and B and C)', () => {
+      expect(fix('((http.host eq "a.com" and http.request.method eq "POST")) and (cf.zone.plan eq "ENT")')).toBe(
+        '(http.host eq "a.com" and http.request.method eq "POST" and cf.zone.plan eq "ENT")'
+      );
+    });
+
+    it('strips double parens with not conditions', () => {
+      expect(fix('((not http.host contains "mail" and not cf.bot_management.static_resource)) and (cf.zone.plan eq "ENT")')).toBe(
+        '(not http.host contains "mail" and not cf.bot_management.static_resource and cf.zone.plan eq "ENT")'
+      );
+    });
+
+    it('strips triple parens and merges', () => {
+      expect(fix('(((http.host eq "a.com"))) and (http.host eq "b.com")')).toBe(
+        '(http.host eq "a.com" and http.host eq "b.com")'
+      );
+    });
   });
 
   describe('wrap or-branches', () => {

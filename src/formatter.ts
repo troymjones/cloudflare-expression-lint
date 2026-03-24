@@ -118,9 +118,22 @@ function printNodeMultiline(node: ASTNode, depth: number, opts: Required<FormatO
   const ind = opts.indent.repeat(depth);
   const indInner = opts.indent.repeat(depth + 1);
 
-  // For non-logical nodes, just use the single-line form
-  if (node.kind !== 'Logical' && node.kind !== 'Group') {
+  // For non-logical, non-group, non-not nodes, just use the single-line form
+  if (node.kind !== 'Logical' && node.kind !== 'Group' && node.kind !== 'Not') {
     return printNode(node);
+  }
+
+  // Not — try to break the operand
+  if (node.kind === 'Not') {
+    const oneLine = printNode(node);
+    if (oneLine.length + ind.length <= opts.maxWidth) {
+      return oneLine;
+    }
+    const operandFormatted = printNodeMultiline(node.operand, depth, opts);
+    if (operandFormatted !== printNode(node.operand)) {
+      return `not ${operandFormatted}`;
+    }
+    return oneLine;
   }
 
   // Group — check if contents need breaking
@@ -142,6 +155,13 @@ function printNodeMultiline(node: ASTNode, depth: number, opts: Required<FormatO
     if (inner.kind === 'InExpression') {
       const formatted = printInExpressionMultiline(inner, depth + 1, opts);
       if (formatted) return `(\n${formatted}\n${ind})`;
+    }
+
+    // Fallback: recursively try to break any inner node (e.g., nested Group, Not)
+    const innerFormatted = printNodeMultiline(inner, depth + 1, opts);
+    if (innerFormatted !== printNode(inner)) {
+      const indInner = opts.indent.repeat(depth + 1);
+      return `(\n${indInner}${innerFormatted}\n${ind})`;
     }
 
     return oneLine;
