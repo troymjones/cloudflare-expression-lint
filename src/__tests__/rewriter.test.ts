@@ -563,9 +563,10 @@ describe('convertBlockScalars', () => {
     expect(actionLine).toBeDefined();
   });
 
-  it('does not collapse plain multi-line values with unparseable expressions', () => {
-    // Expressions with template placeholders can't be parsed by the formatter.
-    // Plain multi-line YAML values should be left alone, not collapsed to inline.
+  it('preserves template placeholders when formatting plain multi-line values', () => {
+    // Expressions with template placeholders are now parseable via placeholder
+    // substitution. The formatter should produce proper multi-line output while
+    // preserving the placeholder text.
     const content = [
       '      expression: (',
       '          http.request.uri.path eq "/graphql" and',
@@ -584,9 +585,9 @@ describe('convertBlockScalars', () => {
       maxWidth: 120,
       convertBlockScalars: true,
     });
-    // Should not rewrite since formatter can't improve the expression
-    expect(result.count).toBe(0);
-    expect(result.content).toBe(content);
+    // Placeholder text should survive formatting
+    expect(result.content).toContain('TEMPLATE_PLACEHOLDER');
+    expect(result.content).toContain('enabled: true');
   });
 
   it('does rewrite plain multi-line values when formatter can improve them', () => {

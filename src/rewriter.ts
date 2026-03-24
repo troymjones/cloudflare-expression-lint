@@ -74,7 +74,7 @@ export function rewriteExpressions(
       // Compare by reading the existing block lines and checking if they'd produce
       // the same >- block as the formatter would write.
       if (isBlockScalar === '>-' && isMultiLine) {
-        const existingBlock = content.substring(lineStart, lineEnd);
+        const existingBlock = modified.substring(lineStart, lineEnd);
         const exprIndent = indent + '  ';
         const formattedLines = formatted.split('\n').map(l => exprIndent + l).join('\n');
         const wouldWrite = `${indent}${key} >-\n${formattedLines}\n`;
@@ -222,6 +222,8 @@ export function findExpressionLocation(
           break;
         }
       }
+      // Trim trailing blank lines — they're YAML structure, not block content
+      while (j > i + 1 && lines[j - 1].trim() === '') j--;
       const blockContent = lines.slice(i + 1, j).map(l => l.trim()).filter(l => l !== '').join(' ').trim();
       if (blockContent === trimmed) {
         const blockEnd = j < lines.length ? offsets[j] : content.length;

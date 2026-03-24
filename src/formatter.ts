@@ -6,6 +6,7 @@
  */
 
 import { parse } from './parser.js';
+import { substitutePlaceholders, restorePlaceholders } from './placeholders.js';
 import type { ASTNode } from './types.js';
 
 export interface FormatOptions {
@@ -26,24 +27,28 @@ const DEFAULT_OPTIONS: Required<FormatOptions> = {
  */
 export function formatExpression(expression: string, options?: FormatOptions): string {
   const opts = { ...DEFAULT_OPTIONS, ...options };
+  const trimmed = expression.trim();
+
+  // Substitute placeholders so expressions with template vars can be parsed
+  const { expression: substituted, map } = substitutePlaceholders(trimmed);
 
   // Try to parse — if it fails, return the expression as-is
   let ast: ASTNode;
   try {
-    ast = parse(expression.trim());
+    ast = parse(substituted);
   } catch {
-    return expression.trim();
+    return trimmed;
   }
 
   const oneLine = printNode(ast);
 
   // If it fits on one line, return as-is
   if (oneLine.length <= opts.maxWidth) {
-    return oneLine;
+    return restorePlaceholders(oneLine, map);
   }
 
   // Format with line breaks
-  return printNodeMultiline(ast, 0, opts);
+  return restorePlaceholders(printNodeMultiline(ast, 0, opts), map);
 }
 
 // ── Single-line printer ──────────────────────────────────────────────

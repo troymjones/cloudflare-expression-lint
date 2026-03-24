@@ -6,6 +6,7 @@
  */
 
 import { parse } from './parser.js';
+import { substitutePlaceholders, restorePlaceholders } from './placeholders.js';
 import type { ASTNode, OperatorStyle, ExpressionType } from './types.js';
 
 export interface FixOptions {
@@ -39,23 +40,24 @@ const ENGLISH_TO_CLIKE: Record<string, string> = {
  */
 export function fixExpression(expression: string, options?: FixOptions): FixResult {
   const fixes: string[] = [];
+  const trimmed = expression.trim();
+
+  // Substitute placeholders so expressions with template vars can be parsed
+  const { expression: substituted, map } = substitutePlaceholders(trimmed);
 
   let ast: ASTNode;
   try {
-    ast = parse(expression.trim());
+    ast = parse(substituted);
   } catch {
-    return { expression: expression.trim(), changed: false, fixes: [] };
+    return { expression: trimmed, changed: false, fixes: [] };
   }
 
   // Apply fixes to the AST
   const fixed = fixNode(ast, fixes, options);
 
-  // Print the fixed AST
-  const result = printNode(fixed);
-
-  // Compare against the canonical form of the original (re-printed from AST)
-  // to avoid false positives from whitespace differences in >- block scalars
-  const originalCanonical = printNode(ast);
+  // Print and restore placeholders
+  const result = restorePlaceholders(printNode(fixed), map);
+  const originalCanonical = restorePlaceholders(printNode(ast), map);
 
   return {
     expression: result,
