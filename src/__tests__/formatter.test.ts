@@ -421,4 +421,33 @@ describe('Expression Formatter', () => {
       expect(result).not.toContain('\n');
     });
   });
+
+  describe('maxWidth guarantee', () => {
+    // These expressions triggered lines exceeding maxWidth before the
+    // nested group and Not fixes. They serve as regression guards.
+    const longExpressions = [
+      // Double-parens with and-chain (the WAF account.yaml pattern)
+      '((not http.host contains "mail" and any(http.request.headers["accept"][*] contains "text/html") and not cf.bot_management.static_resource)) and (cf.zone.plan eq "ENT")',
+      // Or-chain inside double parens
+      '((http.host eq "a.example.com" and http.request.uri.path eq "/path1") or (http.host eq "b.example.com" and http.request.uri.path eq "/path2")) and (cf.zone.plan eq "ENT")',
+      // Deeply nested groups
+      '(((http.host eq "test.com" and http.request.method eq "POST" and http.request.uri.path eq "/api/v1/endpoint" and not ip.src in $blocklist)))',
+      // Not wrapping a long group
+      '(not (http.host eq "a.example.com" and http.request.method eq "POST" and http.request.uri.path eq "/api/v1/very-long-endpoint"))',
+      // Long or-chain with many branches
+      '(http.host eq "a.example.com") or (http.host eq "b.example.com") or (http.host eq "c.example.com") or (http.host eq "d.example.com") or (http.host eq "e.example.com")',
+      // Mixed: long and-chain inside or-branch
+      '(http.host eq "api.example.com" and http.request.method eq "POST" and http.request.uri.path eq "/webhook" and not ip.src in $internal) or (http.host eq "api.example.com" and http.request.uri.path eq "/health")',
+    ];
+
+    for (const expr of longExpressions) {
+      it(`no line exceeds maxWidth: ${expr.substring(0, 60)}...`, () => {
+        const result = formatExpression(expr, { maxWidth: 120 });
+        const lines = result.split('\n');
+        for (const line of lines) {
+          expect(line.length).toBeLessThanOrEqual(120);
+        }
+      });
+    }
+  });
 });

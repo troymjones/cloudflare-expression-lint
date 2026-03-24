@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { fixExpression } from '../fixer.js';
+import { formatExpression } from '../formatter.js';
 import { parse } from '../parser.js';
 import { validate } from '../validator.js';
 
@@ -385,5 +386,66 @@ describe('Auto-fixer', () => {
       const f = fixes('not (http.cookie eq "a" or http.cookie eq "b")');
       expect(f.some(s => s.includes('De Morgan'))).toBe(true);
     });
+  });
+
+  describe('idempotency', () => {
+    // Every expression that the fixer changes must be stable on re-fix.
+    // If fix(fix(expr)) !== fix(expr), the convergence check will never pass.
+    const expressions = [
+      // Merge and-groups
+      '(http.host eq "test.com") and (http.request.method eq "POST")',
+      // Wrap bare expression
+      'http.host eq "test.com"',
+      // De Morgan
+      'not (http.cookie eq "a" or http.cookie eq "b")',
+      // De Morgan and-to-or
+      'not (http.host eq "a" and http.host eq "b")',
+      // Double-paren merge
+      '((not http.host contains "mail" and any(http.request.headers["accept"][*] contains "text/html") and not cf.bot_management.static_resource)) and (cf.zone.plan eq "ENT")',
+      // Triple-paren merge
+      '(((http.host eq "a.com"))) and (http.host eq "b.com")',
+      // Or-chain with bare branches
+      'http.host eq "a.com" or http.host eq "b.com"',
+      // Outer parens on or-chain
+      '((http.host eq "a.com") or (http.host eq "b.com"))',
+      // Unwrap individually-wrapped in and-group
+      '((http.host eq "a.com") and (http.request.method eq "POST"))',
+      // Bare and-chain
+      'http.host eq "a.com" and http.request.method eq "POST"',
+    ];
+
+    for (const expr of expressions) {
+      it(`fix is idempotent: ${expr.substring(0, 60)}${expr.length > 60 ? '...' : ''}`, () => {
+        const first = fixExpression(expr).expression;
+        const second = fixExpression(first).expression;
+        expect(second).toBe(first);
+      });
+    }
+  });
+
+  describe('fix + format pipeline stability', () => {
+    // After fix → format → re-parse (simulating >- round-trip) → fix,
+    // the fixer must report no changes. This is the convergence contract.
+    const expressions = [
+      '(http.host eq "test.com") and (http.request.method eq "POST")',
+      '((not http.host contains "mail" and not cf.bot_management.static_resource)) and (cf.zone.plan eq "ENT")',
+      'not (http.cookie eq "a" or http.cookie eq "b")',
+      '((http.host eq "a.com") or (http.host eq "b.com"))',
+      'http.host eq "a.com" and http.request.method eq "POST" and http.request.uri.path eq "/api"',
+    ];
+
+    for (const expr of expressions) {
+      it(`converges: ${expr.substring(0, 60)}${expr.length > 60 ? '...' : ''}`, () => {
+        // Step 1: fix
+        const fixed = fixExpression(expr).expression;
+        // Step 2: format (simulates what --prettify/rewriteExpressions does)
+        const formatted = formatExpression(fixed, { maxWidth: 120 });
+        // Step 3: re-join lines (simulates YAML >- round-trip through scanner)
+        const rejoined = formatted.split('\n').map((l: string) => l.trim()).join(' ');
+        // Step 4: re-fix should report no changes
+        const refixed = fixExpression(rejoined);
+        expect(refixed.changed).toBe(false);
+      });
+    }
   });
 });
