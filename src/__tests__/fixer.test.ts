@@ -198,6 +198,62 @@ describe('Auto-fixer', () => {
     });
   });
 
+  describe('idempotency', () => {
+    it('fix(fix(expr)) === fix(expr) for all fixable patterns', () => {
+      const expressions = [
+        'http.host eq "test.com"',
+        '(http.host eq "a") and (http.host eq "b")',
+        'not (http.cookie eq "a" or http.cookie eq "b")',
+        '((http.host eq "a") or (http.host eq "b"))',
+        '(http.host == "test.com") && (http.request.method != "POST")',
+        '((http.user_agent contains "Bot") and (ip.src.asnum eq 15169))',
+        'http.host eq "a" or http.host eq "b"',
+      ];
+      for (const expr of expressions) {
+        const first = fix(expr);
+        const second = fix(first);
+        expect(second).toBe(first);
+      }
+    });
+
+    it('already-fixed expression reports changed=false', () => {
+      const alreadyFixed = [
+        '(http.host eq "test.com")',
+        '(http.host eq "a" and ip.src.country eq "US")',
+        '(http.host eq "a.com") or (http.host eq "b.com")',
+        '(not http.cookie contains "abc" and not http.cookie contains "xyz")',
+      ];
+      for (const expr of alreadyFixed) {
+        const result = fixExpression(expr);
+        expect(result.changed).toBe(false);
+        expect(result.fixes).toHaveLength(0);
+      }
+    });
+  });
+
+  describe('named lists and negated in-expressions', () => {
+    it('wraps bare named list expression', () => {
+      expect(fix('ip.src in $my_allowlist')).toBe('(ip.src in $my_allowlist)');
+    });
+
+    it('wraps bare negated in-expression', () => {
+      expect(fix('not ip.src in $blocklist')).toBe('(not ip.src in $blocklist)');
+    });
+  });
+
+  describe('complex combined fixes', () => {
+    it('De Morgan + operator style + structural rewrite', () => {
+      const result = fix('not (http.cookie == "a" || http.cookie == "b") && (http.host == "test.com")');
+      // Should: De Morgan the not(), convert operators, merge the and-groups
+      expect(result).toContain('not http.cookie eq "a"');
+      expect(result).toContain('not http.cookie eq "b"');
+      expect(result).toContain('http.host eq "test.com"');
+      expect(result).not.toContain('==');
+      expect(result).not.toContain('||');
+      expect(result).not.toContain('&&');
+    });
+  });
+
   describe('raw string preservation', () => {
     it('De Morgan preserves raw strings', () => {
       const result = fix('not (http.user_agent matches r"Bot.*" or http.user_agent matches r"Spider.*")');

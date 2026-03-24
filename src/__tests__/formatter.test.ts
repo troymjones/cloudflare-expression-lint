@@ -303,9 +303,31 @@ describe('Expression Formatter', () => {
       const second = formatExpression(first, { maxWidth: 80 });
       expect(second).toBe(first);
     });
+
+    it('idempotent for mixed and/or', () => {
+      const expr = '(http.host eq "a.example.com" and http.request.method eq "POST") or (http.host eq "b.example.com" and http.request.uri.path eq "/webhook") or (http.host eq "c.example.com")';
+      const first = formatExpression(expr, { maxWidth: 80 });
+      const second = formatExpression(first, { maxWidth: 80 });
+      expect(second).toBe(first);
+    });
   });
 
   describe('edge cases', () => {
+    it('handles bare not ssl', () => {
+      expect(formatExpression('not ssl')).toBe('not ssl');
+    });
+
+    it('handles (not ssl) — negated boolean in group', () => {
+      expect(formatExpression('(not ssl)')).toBe('(not ssl)');
+    });
+
+    it('handles deeply nested expressions', () => {
+      const expr = '(((http.host eq "a.example.com" or http.host eq "b.example.com") and http.request.uri.path eq "/api") or ((http.host eq "c.example.com" and http.request.method eq "POST") and (http.request.uri.path eq "/webhook" or http.request.uri.path eq "/callback")))';
+      const result = formatExpression(expr, { maxWidth: 60 });
+      expect(result).toContain('a.example.com');
+      expect(result).toContain('c.example.com');
+      expect(result).toContain('/webhook');
+    });
     it('handles unparseable expression gracefully', () => {
       expect(formatExpression('this is not valid {')).toBe('this is not valid {');
     });

@@ -60,7 +60,7 @@ describe('Expression Builder Compatibility', () => {
 
     it('(not A and not B) — multiple not toggles in group', () => {
       expect(hasBuilderWarning(
-        '(not http.cookie contains "abc" and not http.cookie contains "troyj")'
+        '(not http.cookie contains "abc" and not http.cookie contains "session123")'
       )).toBe(false);
     });
 
@@ -181,19 +181,19 @@ describe('Expression Builder Compatibility', () => {
 
     it('not (A or B) — suggests De Morgan rewrite', () => {
       expect(hasBuilderWarning(
-        'not (http.cookie eq "troyj" or http.cookie eq "abc")'
+        'not (http.cookie eq "session123" or http.cookie eq "abc")'
       )).toBe(true);
       expect(builderMsg(
-        'not (http.cookie eq "troyj" or http.cookie eq "abc")'
+        'not (http.cookie eq "session123" or http.cookie eq "abc")'
       )).toContain('De Morgan');
     });
 
     it('not (A and B) — suggests De Morgan rewrite', () => {
       expect(hasBuilderWarning(
-        'not (http.cookie eq "troyj" and http.cookie eq "abc")'
+        'not (http.cookie eq "session123" and http.cookie eq "abc")'
       )).toBe(true);
       expect(builderMsg(
-        'not (http.cookie eq "troyj" and http.cookie eq "abc")'
+        'not (http.cookie eq "session123" and http.cookie eq "abc")'
       )).toContain('De Morgan');
     });
 

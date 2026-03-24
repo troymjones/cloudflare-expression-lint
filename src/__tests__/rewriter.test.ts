@@ -437,6 +437,44 @@ describe('convertBlockScalars', () => {
     expect(result.content).not.toContain('expression: |');
   });
 
+  it('idempotent — second rewrite returns count 0', () => {
+    const content = [
+      '- description: Rule A',
+      '  expression: (http.host eq "a.example.com" and http.request.method eq "POST" and http.request.uri.path eq "/api/long-path")',
+      '  enabled: true',
+      '',
+    ].join('\n');
+
+    const expressions = [
+      { expression: '(http.host eq "a.example.com" and http.request.method eq "POST" and http.request.uri.path eq "/api/long-path")' },
+    ];
+
+    const first = rewriteExpressions(content, expressions, { maxWidth: 80 });
+    expect(first.count).toBe(1);
+
+    // Second pass on the prettified output
+    const second = rewriteExpressions(first.content, expressions, { maxWidth: 80 });
+    expect(second.count).toBe(0);
+    expect(second.content).toBe(first.content);
+  });
+
+  it('handles single-quoted YAML value end-to-end', () => {
+    const content = [
+      "  expression: '(http.host eq \"a.example.com\" and http.request.method eq \"POST\" and http.request.uri.path eq \"/api/webhook\")'",
+      '  enabled: true',
+      '',
+    ].join('\n');
+
+    const expressions = [
+      { expression: '(http.host eq "a.example.com" and http.request.method eq "POST" and http.request.uri.path eq "/api/webhook")' },
+    ];
+
+    const result = rewriteExpressions(content, expressions, { maxWidth: 80 });
+    expect(result.count).toBe(1);
+    expect(result.content).toContain('expression: >-');
+    expect(result.content).toContain('\n  enabled: true');
+  });
+
   it('does not corrupt next YAML key when converting |', () => {
     const content = [
       '    expression: |',
