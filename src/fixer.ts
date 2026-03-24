@@ -225,18 +225,43 @@ function fixBuilderStructure(node: ASTNode, fixes: string[]): ASTNode {
         && lastLeaf.right.kind === 'StringLiteral' && lastLeaf.right.value === 'ENT';
 
       if (isZonePlanSuffix) {
-        // Merge everything except the ENT suffix into a group, keep suffix separate.
-        // Merging it in would break the validator's isZonePlanSuffixed check.
+        // Account-level: Builder requires ((inner)) and (cf.zone.plan eq "ENT")
+        // The inner expression gets double-wrapped (exactly 2 layers, not 1, not 3).
         const mainLeaves = allLeaves.slice(0, -1);
-        if (mainLeaves.length === 1 && mainLeaves[0].kind === 'Group') {
-          // Already (A) and (cf.zone.plan eq "ENT") — just fix inner if needed
-          return node;
-        }
+        const suffixGroup = buildGroup(lastLeaf);
+
         if (mainLeaves.every(l => isSimpleCondition(l) || l.kind === 'Not')) {
-          fixes.push('merge (A) and (B) → (A and B)');
-          const mainGroup = buildGroup(buildAndChain(mainLeaves));
-          const suffixGroup = buildGroup(lastLeaf);
-          return { kind: 'Logical', left: mainGroup, operator: 'and', right: suffixGroup, position: 0 };
+          // Fix inner with normal Builder rules, then double-wrap
+          let innerFixed: ASTNode;
+          if (mainLeaves.length === 1) {
+            innerFixed = mainLeaves[0];
+          } else {
+            innerFixed = buildAndChain(mainLeaves);
+          }
+          const doubleWrapped = buildGroup(buildGroup(innerFixed));
+          const result: ASTNode = { kind: 'Logical', left: doubleWrapped, operator: 'and', right: suffixGroup, position: 0 };
+          const resultStr = printNode(result);
+          const originalStr = printNode(node);
+          if (resultStr !== originalStr) {
+            fixes.push('fix Builder format for account-level expression');
+          }
+          return result;
+        }
+
+        // Inner has complex structure (or-chain, nested groups) — fix inner, wrap once more
+        if (mainLeaves.length === 1) {
+          const inner = mainLeaves[0];
+          // Fix the inner expression with normal Builder rules
+          const fixedInner = fixBuilderStructure(stripGroup(inner), fixes);
+          // Wrap once: normal Builder form + 1 extra group for account-level
+          const wrapped = buildGroup(fixedInner);
+          const result: ASTNode = { kind: 'Logical', left: wrapped, operator: 'and', right: suffixGroup, position: 0 };
+          const resultStr = printNode(result);
+          const originalStr = printNode(node);
+          if (resultStr !== originalStr && fixes.length === 0) {
+            fixes.push('fix Builder format for account-level expression');
+          }
+          return result;
         }
       } else if (allLeaves.every(l => isSimpleCondition(l) || l.kind === 'Not')) {
         fixes.push('merge (A) and (B) → (A and B)');

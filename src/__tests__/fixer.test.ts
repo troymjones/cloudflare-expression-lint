@@ -70,27 +70,50 @@ describe('Auto-fixer', () => {
       );
     });
 
-    it('strips double parens and merges, preserving ENT suffix', () => {
-      expect(fix('((http.host eq "a.com" and http.request.method eq "POST")) and (cf.zone.plan eq "ENT")')).toBe(
-        '(http.host eq "a.com" and http.request.method eq "POST") and (cf.zone.plan eq "ENT")'
-      );
-    });
-
-    it('strips double parens with not conditions, preserving ENT suffix', () => {
-      expect(fix('((not http.host contains "mail" and not cf.bot_management.static_resource)) and (cf.zone.plan eq "ENT")')).toBe(
-        '(not http.host contains "mail" and not cf.bot_management.static_resource) and (cf.zone.plan eq "ENT")'
-      );
-    });
-
     it('strips triple parens and merges (non-ENT)', () => {
       expect(fix('(((http.host eq "a.com"))) and (http.host eq "b.com")')).toBe(
         '(http.host eq "a.com" and http.host eq "b.com")'
       );
     });
+  });
 
-    it('does not merge (A) and (cf.zone.plan eq "ENT")', () => {
-      const result = fixExpression('(http.host eq "test.com") and (cf.zone.plan eq "ENT")');
+  describe('account-level Builder format: ((inner)) and (cf.zone.plan eq "ENT")', () => {
+    it('double-wraps single condition', () => {
+      expect(fix('(http.host eq "a.com") and (cf.zone.plan eq "ENT")')).toBe(
+        '((http.host eq "a.com")) and (cf.zone.plan eq "ENT")'
+      );
+    });
+
+    it('double-wraps and-chain from merged groups', () => {
+      expect(fix('(http.host eq "a.com") and (http.request.method eq "POST") and (cf.zone.plan eq "ENT")')).toBe(
+        '((http.host eq "a.com" and http.request.method eq "POST")) and (cf.zone.plan eq "ENT")'
+      );
+    });
+
+    it('preserves already-correct double-wrap', () => {
+      const result = fixExpression('((http.host eq "a.com")) and (cf.zone.plan eq "ENT")');
       expect(result.changed).toBe(false);
+    });
+
+    it('adds double-wrap to single-wrapped and-chain', () => {
+      expect(fix('(not http.host eq "a.com" and http.request.method eq "POST") and (cf.zone.plan eq "ENT")')).toBe(
+        '((not http.host eq "a.com" and http.request.method eq "POST")) and (cf.zone.plan eq "ENT")'
+      );
+    });
+
+    it('preserves already-correct or-chain', () => {
+      const result = fixExpression('((http.host eq "a.com") or (http.host eq "b.com")) and (cf.zone.plan eq "ENT")');
+      expect(result.changed).toBe(false);
+    });
+
+    it('preserves already-correct double-wrapped not+and', () => {
+      const result = fixExpression('((not http.host contains "mail" and not cf.bot_management.static_resource)) and (cf.zone.plan eq "ENT")');
+      expect(result.changed).toBe(false);
+    });
+
+    it('does not produce triple parens for or-chains', () => {
+      const result = fix('((http.host eq "a.com") or (http.host eq "b.com")) and (cf.zone.plan eq "ENT")');
+      expect(result).not.toContain('(((');
     });
   });
 
