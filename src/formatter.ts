@@ -238,6 +238,9 @@ function printInExpressionMultiline(node: ASTNode & { kind: 'InExpression' }, de
 }
 
 /** Escape special characters in a string literal. */
+/** Escape for Cloudflare expression string literals.
+ *  Only `"` needs escaping (to `\"`). Backslashes pass through as-is
+ *  because they're regex escapes in Cloudflare expressions, not string escapes. */
 function escapeString(s: string): string {
-  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  return s.replace(/"/g, '\\"');
 }

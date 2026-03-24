@@ -74,7 +74,7 @@ export function tokenize(input: string): Token[] {
           case '\\': value += '\\'; break;
           case 'n': value += '\n'; break;
           case 't': value += '\t'; break;
-          default: value += escaped; break;
+          default: value += '\\' + escaped; break;  // preserve unrecognized escapes (e.g., \d, \., \&)
         }
       } else {
         value += advance();

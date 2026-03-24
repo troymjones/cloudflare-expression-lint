@@ -183,6 +183,18 @@ describe('Expression Formatter', () => {
       expect(result).toContain('r"Mozilla\\/5\\.0.*Chrome"');
     });
 
+    it('preserves backslash escapes in regular strings', () => {
+      expect(formatExpression('(http.request.uri.path matches "^/test/\\d{1,10}/foo")')).toBe(
+        '(http.request.uri.path matches "^/test/\\d{1,10}/foo")'
+      );
+    });
+
+    it('preserves \\. and \\& in regex patterns', () => {
+      expect(formatExpression('(http.user_agent matches "Chrome/13[0-9]\\..*")')).toBe(
+        '(http.user_agent matches "Chrome/13[0-9]\\..*")'
+      );
+    });
+
     it('preserves raw strings in wildcard', () => {
       const expr = '(http.request.uri.path wildcard r"*.jpg") or (http.request.uri.path wildcard r"*.png")';
       const result = formatExpression(expr);
