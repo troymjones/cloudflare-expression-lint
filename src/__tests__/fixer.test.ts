@@ -116,6 +116,50 @@ describe('Auto-fixer', () => {
       expect(result).not.toContain('(((');
     });
 
+  });
+
+  describe('collapse or-eq to in-list', () => {
+    it('collapses 3+ or-eq branches on same field', () => {
+      expect(fix('(ip.src.country eq "US") or (ip.src.country eq "CA") or (ip.src.country eq "MX")')).toBe(
+        '(ip.src.country in {"US" "CA" "MX"})'
+      );
+    });
+
+    it('collapses many branches', () => {
+      const branches = Array.from({ length: 10 }, (_, i) => `(http.host eq "h${i}.com")`).join(' or ');
+      const result = fixExpression(branches);
+      expect(result.expression).toContain('http.host in {');
+      expect(result.fixes).toContain('collapse 10 or-eq branches to in-list');
+    });
+
+    it('does not collapse 2 branches', () => {
+      const result = fixExpression('(ip.src.country eq "US") or (ip.src.country eq "CA")');
+      expect(result.expression).not.toContain('in {');
+    });
+
+    it('does not collapse mixed fields', () => {
+      const result = fixExpression('(ip.src.country eq "US") or (http.host eq "test.com") or (ip.src.country eq "CA")');
+      expect(result.expression).not.toContain('in {');
+    });
+
+    it('does not collapse mixed operators', () => {
+      const result = fixExpression('(ip.src.country eq "US") or (ip.src.country ne "CA") or (ip.src.country eq "MX")');
+      expect(result.expression).not.toContain('in {');
+    });
+
+    it('is idempotent', () => {
+      const first = fixExpression('(ip.src.country eq "US") or (ip.src.country eq "CA") or (ip.src.country eq "MX")');
+      const second = fixExpression(first.expression);
+      expect(second.changed).toBe(false);
+    });
+
+    it('collapses nested or-chain inside and-chain', () => {
+      const result = fixExpression('((ip.src.country eq "US") or (ip.src.country eq "CA") or (ip.src.country eq "MX")) and (http.request.method eq "GET")');
+      expect(result.expression).toContain('ip.src.country in {');
+    });
+  });
+
+  describe('account-level Builder format: ((inner)) and (cf.zone.plan eq "ENT")', () => {
     it('De Morgan + ENT produces double-wrapped result', () => {
       expect(fix('not (http.host eq "a.com" or http.host eq "b.com") and (cf.zone.plan eq "ENT")')).toBe(
         '((not http.host eq "a.com" and not http.host eq "b.com")) and (cf.zone.plan eq "ENT")'

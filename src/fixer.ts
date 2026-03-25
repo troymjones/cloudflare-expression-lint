@@ -74,13 +74,17 @@ function fixNode(node: ASTNode, fixes: string[], options?: FixOptions): ASTNode 
   // Fix operator style first (deepest nodes first)
   let fixed = fixOperatorStyle(node, fixes, options);
 
-  // Builder-compat fixes only apply to filter expressions
+  // Builder-compat fixes only apply to filter expressions.
+  // Iterate because one fix can expose patterns for another
+  // (e.g., Builder restructuring exposes or-eq chains).
   if (isFilter) {
-    // Fix De Morgan's: not (A or B) → (not A and not B)
-    fixed = fixDeMorgans(fixed, fixes);
-
-    // Fix top-level structure for Builder compatibility
-    fixed = fixBuilderStructure(fixed, fixes);
+    for (let pass = 0; pass < 5; pass++) {
+      const before = printNode(fixed);
+      fixed = fixOrEqToIn(fixed, fixes);
+      fixed = fixDeMorgans(fixed, fixes);
+      fixed = fixBuilderStructure(fixed, fixes);
+      if (printNode(fixed) === before) break;
+    }
   }
 
   return fixed;
@@ -127,6 +131,68 @@ function fixOperatorStyle(node: ASTNode, fixes: string[], options?: FixOptions):
     default:
       return node;
   }
+}
+
+/**
+ * Collapse or-chains of eq comparisons on the same field into an in-list.
+ * (A eq "x") or (A eq "y") or (A eq "z") → (A in {"x" "y" "z"})
+ * Recurses into Groups to find nested or-chains.
+ */
+function fixOrEqToIn(node: ASTNode, fixes: string[]): ASTNode {
+  if (node.kind === 'Group') {
+    const fixed = fixOrEqToIn(node.expression, fixes);
+    return fixed !== node.expression ? { ...node, expression: fixed } : node;
+  }
+
+  if (node.kind === 'Logical') {
+    // For or-chains: collect ALL branches first, then check the pattern
+    if (isAllOp(node, 'or')) {
+      const branches: ASTNode[] = [];
+      collectChain(node, 'or', branches);
+
+      if (branches.length >= 3) {
+        const fieldName = extractEqField(branches[0]);
+        if (fieldName) {
+          const values: ASTNode[] = [];
+          let allMatch = true;
+          for (const branch of branches) {
+            const stripped = stripGroup(branch);
+            if (stripped.kind !== 'Comparison' || normalizeOp(stripped.operator) !== 'eq' || printNode(stripped.left) !== fieldName) {
+              allMatch = false;
+              break;
+            }
+            values.push(stripped.right);
+          }
+          if (allMatch) {
+            fixes.push(`collapse ${branches.length} or-eq branches to in-list`);
+            const inExpr: ASTNode = {
+              kind: 'InExpression',
+              field: (stripGroup(branches[0]) as any).left,
+              values,
+              negated: false,
+              position: node.position,
+            };
+            return buildGroup(inExpr);
+          }
+        }
+      }
+    }
+
+    // For and-chains or non-matching or-chains: recurse into children
+    const left = fixOrEqToIn(node.left, fixes);
+    const right = fixOrEqToIn(node.right, fixes);
+    return (left !== node.left || right !== node.right) ? { ...node, left, right } : node;
+  }
+
+  return node;
+}
+
+/** Extract the field name from an or-branch if it's (field eq "value") */
+function extractEqField(branch: ASTNode): string | null {
+  const inner = stripGroup(branch);
+  if (inner.kind !== 'Comparison') return null;
+  if (normalizeOp(inner.operator) !== 'eq') return null;
+  return printNode(inner.left);
 }
 
 /** Fix De Morgan's law: not (A or B) → (not A and not B), not (A and B) → (not A) or (not B) */

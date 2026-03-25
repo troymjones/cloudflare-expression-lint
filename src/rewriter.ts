@@ -230,6 +230,28 @@ export function findExpressionLocation(
         return { lineStart: offsets[i], lineEnd: blockEnd, indent, key: `${key}:`, isBlockScalar: value.trim() };
       }
     }
+
+    // Value starts on the next line (key: \n  value...)
+    if (!value || !value.trim()) {
+      const keyIndent = indent.length;
+      let j = i + 1;
+      while (j < lines.length) {
+        const nextLine = lines[j];
+        if (nextLine.trim() === '' || countIndent(nextLine) > keyIndent) {
+          j++;
+        } else {
+          break;
+        }
+      }
+      while (j > i + 1 && lines[j - 1].trim() === '') j--;
+      if (j > i + 1) {
+        const allLines = lines.slice(i + 1, j).map(l => l.trim()).filter(l => l !== '').join(' ').trim();
+        if (allLines === trimmed) {
+          const blockEnd = j < lines.length ? offsets[j] : content.length;
+          return { lineStart: offsets[i], lineEnd: blockEnd, indent, key: `${key}:`, isBlockScalar: 'plain-multiline' };
+        }
+      }
+    }
   }
 
   return null;
