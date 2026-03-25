@@ -7,6 +7,7 @@
 
 import { parse } from './parser.js';
 import { substitutePlaceholders, restorePlaceholders } from './placeholders.js';
+import { printNode, normalizeOp, collectChain, stripGroup } from './ast-utils.js';
 import type { ASTNode, OperatorStyle, ExpressionType } from './types.js';
 
 export interface FixOptions {
@@ -436,25 +437,6 @@ function isAllOp(node: ASTNode, op: string): boolean {
   return isAllOp(node.left, op) && isAllOp(node.right, op);
 }
 
-function normalizeOp(op: string): string {
-  if (op === '&&') return 'and';
-  if (op === '||') return 'or';
-  return op;
-}
-
-function collectChain(node: ASTNode, op: string, branches: ASTNode[]): void {
-  if (node.kind === 'Logical' && normalizeOp(node.operator) === op) {
-    collectChain(node.left, op, branches);
-    collectChain(node.right, op, branches);
-  } else {
-    branches.push(node);
-  }
-}
-
-function stripGroup(node: ASTNode): ASTNode {
-  while (node.kind === 'Group') node = node.expression;
-  return node;
-}
 
 function wrapNot(node: ASTNode): ASTNode {
   // Don't double-negate
@@ -482,47 +464,3 @@ function buildOrChain(nodes: ASTNode[]): ASTNode {
   return result;
 }
 
-// ── AST Printer ──────────────────────────────────────────────────────
-
-function printNode(node: ASTNode): string {
-  switch (node.kind) {
-    case 'BooleanLiteral':
-      return String(node.value);
-    case 'StringLiteral':
-      if (node.raw) return `r"${node.value}"`;
-      return `"${node.value.replace(/"/g, '\\"')}"`;
-    case 'IntegerLiteral':
-    case 'FloatLiteral':
-      return String(node.value);
-    case 'IPLiteral':
-      return node.cidr !== undefined ? `${node.value}/${node.cidr}` : node.value;
-    case 'FieldAccess': {
-      let s = node.field;
-      if (node.mapKey !== undefined) s += `["${node.mapKey.replace(/"/g, '\\"')}"]`;
-      if (node.arrayIndex !== undefined) s += `[${node.arrayIndex}]`;
-      return s;
-    }
-    case 'NamedList':
-      return node.name.startsWith('$') ? node.name : `$${node.name}`;
-    case 'FunctionCall':
-      return `${node.name}(${node.args.map(a => printNode(a)).join(', ')})`;
-    case 'Comparison':
-      return `${printNode(node.left)} ${node.operator} ${printNode(node.right)}`;
-    case 'Logical':
-      return `${printNode(node.left)} ${node.operator} ${printNode(node.right)}`;
-    case 'Not':
-      return `not ${printNode(node.operand)}`;
-    case 'InExpression': {
-      const field = printNode(node.field);
-      const neg = node.negated ? 'not ' : '';
-      if (node.values.length === 1 && node.values[0].kind === 'NamedList') {
-        return `${neg}${field} in ${printNode(node.values[0])}`;
-      }
-      return `${neg}${field} in {${node.values.map(v => printNode(v)).join(' ')}}`;
-    }
-    case 'Group':
-      return `(${printNode(node.expression)})`;
-    case 'ArrayUnpack':
-      return `${printNode(node.field)}[*]`;
-  }
-}

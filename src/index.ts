@@ -7,6 +7,7 @@
 
 export { tokenize } from './lexer.js';
 export { parse } from './parser.js';
+export { printNode, normalizeOp, collectChain, stripGroup } from './ast-utils.js';
 export { validate } from './validator.js';
 export { formatExpression } from './formatter.js';
 export type { FormatOptions } from './formatter.js';
