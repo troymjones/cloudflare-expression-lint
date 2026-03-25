@@ -6,7 +6,11 @@
  */
 
 import { formatExpression, type FormatOptions } from './formatter.js';
+import { findExpressionLocation } from './yaml-locator.js';
 import { parse } from './parser.js';
+
+// Re-export for backwards compatibility
+export { findExpressionLocation } from './yaml-locator.js';
 
 export interface RewriteOptions extends FormatOptions {
   /** Convert existing | and |- block scalars to >- */
@@ -23,11 +27,6 @@ export interface RewriteResult {
   count: number;
 }
 
-/** Known YAML keys that contain Cloudflare expressions */
-const EXPRESSION_KEYS = new Set([
-  'expression', 'source_url_expression', 'counting_expression',
-  'rewrite_expression', 'condition',
-]);
 
 /**
  * Rewrite expressions in YAML content for readability.
@@ -135,129 +134,3 @@ function deduplicateExpressions(expressions: { expression: string }[]): { expres
   });
 }
 
-/**
- * Find the location of an expression value in YAML content,
- * searching backwards from `beforeOffset`.
- */
-export function findExpressionLocation(
-  content: string, expression: string, beforeOffset?: number,
-): {
-  lineStart: number; lineEnd: number; indent: string; key: string;
-  /** The block scalar type if the expression uses one, or null for inline */
-  isBlockScalar?: string;
-} | null {
-  // Normalize the search expression: collapse whitespace so multi-line
-  // scanner output matches against joined block scalar content
-  const trimmed = expression.split('\n').map(l => l.trim()).filter(l => l !== '').join(' ').trim();
-  // Strip \r from lines for regex matching (CRLF files), but keep offsets based on original content
-  const rawLines = content.split('\n');
-  const lines = rawLines.map(l => l.replace(/\r$/, ''));
-  let offset = 0;
-  const offsets: number[] = [];
-
-  // Build line offset index using raw line lengths to preserve correct byte offsets
-  for (const line of rawLines) {
-    offsets.push(offset);
-    offset += line.length + 1;
-  }
-
-  // Search backwards from beforeOffset (or end of file)
-  const maxOffset = beforeOffset ?? content.length;
-
-  for (let i = lines.length - 1; i >= 0; i--) {
-    if (offsets[i] >= maxOffset) continue;
-
-    const line = lines[i];
-    const keyMatch = line.match(/^(\s*(?:-\s+)?)([\w_]+):\s*(.*)$/);
-    if (!keyMatch) continue;
-
-    const [, fullIndent, key, value] = keyMatch;
-    if (!EXPRESSION_KEYS.has(key)) continue;
-    // Use the whitespace portion for indentation (without list marker)
-    const indent = fullIndent;
-
-    // Inline value
-    if (value && !['|', '>-', '>', '|+', '|-', '>+'].includes(value.trim())) {
-      let unquoted = value.replace(/^['"]|['"]$/g, '').trim();
-      // Unescape YAML double-quoted string escapes
-      if (value.trim().startsWith('"')) {
-        unquoted = unquoted.replace(/\\"/g, '"').replace(/\\\\/g, '\\');
-      }
-      if (unquoted === trimmed || value.trim() === trimmed) {
-        const lineEnd = offsets[i] + line.length + 1;
-        return { lineStart: offsets[i], lineEnd, indent, key: `${key}:` };
-      }
-
-      // Plain multi-line value (wraps across lines without block scalar indicator)
-      if (unquoted && !value.trim().startsWith('"') && !value.trim().startsWith("'")) {
-        const keyIndent = indent.length;
-        let j = i + 1;
-        while (j < lines.length) {
-          const nextLine = lines[j];
-          if (nextLine.trim() === '' || countIndent(nextLine) > keyIndent) {
-            j++;
-          } else {
-            break;
-          }
-        }
-        if (j > i + 1) {
-          const allLines = [value, ...lines.slice(i + 1, j)].map(l => l.trim()).filter(l => l !== '').join(' ').trim();
-          if (allLines === trimmed) {
-            const blockEnd = j < lines.length ? offsets[j] : content.length;
-            return { lineStart: offsets[i], lineEnd: blockEnd, indent, key: `${key}:`, isBlockScalar: 'plain-multiline' };
-          }
-        }
-      }
-    }
-
-    // Block scalar (| or >-)
-    if (['|', '>-', '>', '|+', '|-', '>+'].includes(value.trim())) {
-      const blockIndent = indent.length + 2;
-      let j = i + 1;
-      while (j < lines.length) {
-        const nextLine = lines[j];
-        if (nextLine.trim() === '' || countIndent(nextLine) >= blockIndent) {
-          j++;
-        } else {
-          break;
-        }
-      }
-      // Trim trailing blank lines — they're YAML structure, not block content
-      while (j > i + 1 && lines[j - 1].trim() === '') j--;
-      const blockContent = lines.slice(i + 1, j).map(l => l.trim()).filter(l => l !== '').join(' ').trim();
-      if (blockContent === trimmed) {
-        const blockEnd = j < lines.length ? offsets[j] : content.length;
-        return { lineStart: offsets[i], lineEnd: blockEnd, indent, key: `${key}:`, isBlockScalar: value.trim() };
-      }
-    }
-
-    // Value starts on the next line (key: \n  value...)
-    if (!value || !value.trim()) {
-      const keyIndent = indent.length;
-      let j = i + 1;
-      while (j < lines.length) {
-        const nextLine = lines[j];
-        if (nextLine.trim() === '' || countIndent(nextLine) > keyIndent) {
-          j++;
-        } else {
-          break;
-        }
-      }
-      while (j > i + 1 && lines[j - 1].trim() === '') j--;
-      if (j > i + 1) {
-        const allLines = lines.slice(i + 1, j).map(l => l.trim()).filter(l => l !== '').join(' ').trim();
-        if (allLines === trimmed) {
-          const blockEnd = j < lines.length ? offsets[j] : content.length;
-          return { lineStart: offsets[i], lineEnd: blockEnd, indent, key: `${key}:`, isBlockScalar: 'plain-multiline' };
-        }
-      }
-    }
-  }
-
-  return null;
-}
-
-function countIndent(line: string): number {
-  const m = line.match(/^(\s*)/);
-  return m ? m[1].length : 0;
-}
