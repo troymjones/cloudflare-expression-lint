@@ -71,7 +71,7 @@ function parseArgs(argv: string[]): CLIOptions {
     fix: false,
     check: false,
     convertBlockScalars: false,
-    maxWidth: 120,
+    maxWidth: 100,
     maxInListItems: 10,
     help: false,
   };
@@ -307,7 +307,8 @@ Options:
                              Use with --prettify. Short expressions become inline.
   --check                    Dry-run for --fix or --prettify. Exits non-zero if
                              any changes would be made, without modifying files.
-  --max-width <n>            Max line width for --prettify (default: 120).
+  --max-width <n>            Max expression width for --prettify (default: 100).
+                             Accounts for ~20 chars of YAML indentation.
   --max-in-list-items <n>    Warn when a literal in-list has this many items
                              or more (default: 10). Suggests using a named list.
   --help, -h                 Show this help

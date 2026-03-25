@@ -10,14 +10,14 @@ import { substitutePlaceholders, restorePlaceholders } from './placeholders.js';
 import type { ASTNode } from './types.js';
 
 export interface FormatOptions {
-  /** Maximum line width before breaking. Default: 120 */
+  /** Maximum expression width before breaking. Default: 100 */
   maxWidth?: number;
   /** Indentation string. Default: '  ' (2 spaces) */
   indent?: string;
 }
 
 const DEFAULT_OPTIONS: Required<FormatOptions> = {
-  maxWidth: 120,
+  maxWidth: 100,
   indent: '  ',
 };
 
