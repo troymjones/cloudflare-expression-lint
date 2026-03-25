@@ -524,9 +524,9 @@ describe('Expression Formatter', () => {
     });
 
     it('preserves placeholder in in-list through formatting', () => {
-      const expr = '(ip.src in {BLOCKED_IPS} and http.host eq "test.com")';
+      const expr = '(ip.src in {__BLOCKED_IPS__} and http.host eq "test.com")';
       const result = formatExpression(expr, { maxWidth: 40 });
-      expect(result).toContain('BLOCKED_IPS');
+      expect(result).toContain('__BLOCKED_IPS__');
       expect(result).not.toContain('__ph_');
     });
   });

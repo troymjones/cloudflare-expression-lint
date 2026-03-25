@@ -572,13 +572,13 @@ describe('convertBlockScalars', () => {
       '          http.request.uri.path eq "/graphql" and',
       '          http.request.method eq "POST" and',
       '          any(http.request.headers["origin"][*] eq "https://example.com") and',
-      '          any(http.request.headers["x-app"][*] in {TEMPLATE_PLACEHOLDER})',
+      '          any(http.request.headers["x-app"][*] in {__TEMPLATE_PLACEHOLDER__})',
       '        )',
       '      enabled: true',
       '',
     ].join('\n');
     const expressions = [
-      { expression: '( http.request.uri.path eq "/graphql" and http.request.method eq "POST" and any(http.request.headers["origin"][*] eq "https://example.com") and any(http.request.headers["x-app"][*] in {TEMPLATE_PLACEHOLDER}) )' },
+      { expression: '( http.request.uri.path eq "/graphql" and http.request.method eq "POST" and any(http.request.headers["origin"][*] eq "https://example.com") and any(http.request.headers["x-app"][*] in {__TEMPLATE_PLACEHOLDER__}) )' },
     ];
 
     const result = rewriteExpressions(content, expressions, {
@@ -586,7 +586,7 @@ describe('convertBlockScalars', () => {
       convertBlockScalars: true,
     });
     // Placeholder text should survive formatting
-    expect(result.content).toContain('TEMPLATE_PLACEHOLDER');
+    expect(result.content).toContain('__TEMPLATE_PLACEHOLDER__');
     expect(result.content).toContain('enabled: true');
   });
 

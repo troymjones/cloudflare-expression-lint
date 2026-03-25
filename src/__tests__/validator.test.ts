@@ -423,4 +423,22 @@ describe('Validator', () => {
       expect(codes(`(ip.src in {${values}})`)).toContain('long-in-list');
     });
   });
+
+  describe('legacy-placeholder-format diagnostic', () => {
+    it('flags UPPER_CASE placeholder without __delimiters__', () => {
+      expect(codes('(ip.src in {BLOCKED_IPS})')).toContain('legacy-placeholder-format');
+    });
+
+    it('does not flag __NAME__ placeholder', () => {
+      expect(codes('(ip.src in {__BLOCKED_IPS__})')).not.toContain('legacy-placeholder-format');
+    });
+
+    it('does not flag expressions without placeholders', () => {
+      expect(codes('(http.host eq "test.com")')).not.toContain('legacy-placeholder-format');
+    });
+
+    it('flags when mix of __NAME__ and UPPER_CASE is used', () => {
+      expect(codes('(ip.src in {__GOOD_FORMAT__} and http.host in {BAD_FORMAT})')).toContain('legacy-placeholder-format');
+    });
+  });
 });

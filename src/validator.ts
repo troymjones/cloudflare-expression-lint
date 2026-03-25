@@ -49,7 +49,7 @@ export function validate(expression: string, context: ValidationContext): LintRe
   }
 
   // Check for template placeholders — expressions containing unresolved
-  // template variables (e.g., UPPER_CASE_VAR, ${var}, {PLACEHOLDER})
+  // template variables (e.g., __NAME__, UPPER_CASE_VAR, ${var})
   // cannot be validated since they're not complete expressions yet.
   if (context.allowPlaceholders !== false && containsTemplatePlaceholders(expression)) {
     diagnostics.push({
@@ -57,6 +57,14 @@ export function validate(expression: string, context: ValidationContext): LintRe
       message: 'Expression contains template placeholders and cannot be fully validated',
       code: 'contains-placeholders',
     });
+    // Warn if using legacy UPPER_CASE format instead of __NAME__
+    if (containsLegacyPlaceholders(expression)) {
+      diagnostics.push({
+        severity: 'info',
+        message: 'Use __NAME__ format for placeholders (e.g., __ALLOWED_IPS__ instead of ALLOWED_IPS) for reliable parsing and formatting',
+        code: 'legacy-placeholder-format',
+      });
+    }
     // Still try to parse — some expressions are partially valid
   }
 
@@ -1059,6 +1067,47 @@ function containsTemplatePlaceholders(expression: string): boolean {
       while (j < expression.length && /[A-Z0-9_]/.test(expression[j])) j++;
       const word = expression.slice(i, j);
       // Must be at least 4 chars, contain an underscore, and be all-caps
+      if (word.length >= 4 && word.includes('_') && /^[A-Z][A-Z0-9_]+$/.test(word)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * Detect if an expression contains legacy-format placeholders (UPPER_CASE_VAR
+ * without __double_underscore__ delimiters). Returns false if all placeholders
+ * use the preferred __NAME__ format.
+ */
+function containsLegacyPlaceholders(expression: string): boolean {
+  let inQuote = false;
+  let escaped = false;
+  for (let i = 0; i < expression.length; i++) {
+    const ch = expression[i];
+    if (escaped) { escaped = false; continue; }
+    if (ch === '\\') { escaped = true; continue; }
+    if (ch === '"') { inQuote = !inQuote; continue; }
+    if (inQuote) continue;
+
+    // Skip __NAME__ patterns (preferred format)
+    if (ch === '_' && expression[i + 1] === '_') {
+      let j = i + 2;
+      while (j < expression.length && /[A-Z0-9_]/.test(expression[j])) j++;
+      const word = expression.slice(i, j);
+      if (word.length >= 6 && word.endsWith('__')) {
+        i = j - 1;
+        continue;
+      }
+    }
+
+    // Check for bare UPPER_CASE_IDENTIFIER (legacy)
+    if (/[A-Z]/.test(ch)) {
+      if (i > 0 && expression[i - 1] === '.') continue;
+      if (i > 0 && /[a-zA-Z]/.test(expression[i - 1])) continue;
+      let j = i;
+      while (j < expression.length && /[A-Z0-9_]/.test(expression[j])) j++;
+      const word = expression.slice(i, j);
       if (word.length >= 4 && word.includes('_') && /^[A-Z][A-Z0-9_]+$/.test(word)) {
         return true;
       }
