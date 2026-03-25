@@ -1,0 +1,12 @@
+zone:
+  waf_rules:
+    name: test-rules
+    rules:
+      - description: Block bad bots
+        expression: (cf.bot_management.score lt 30)
+        action: block
+        enabled: true
+      - description: Allow known IPs
+        expression: (ip.src in $allowlist)
+        action: skip
+        enabled: true

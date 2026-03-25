@@ -7,6 +7,7 @@
 
 import { parse } from './parser.js';
 import { substitutePlaceholders, restorePlaceholders } from './placeholders.js';
+import { printNode, normalizeOp, collectChain } from './ast-utils.js';
 import type { ASTNode } from './types.js';
 
 export interface FormatOptions {
@@ -49,71 +50,6 @@ export function formatExpression(expression: string, options?: FormatOptions): s
 
   // Format with line breaks
   return restorePlaceholders(printNodeMultiline(ast, 0, opts), map);
-}
-
-// ── Single-line printer ──────────────────────────────────────────────
-
-/** Print an AST node as a single-line string (canonical form). */
-function printNode(node: ASTNode): string {
-  switch (node.kind) {
-    case 'BooleanLiteral':
-      return String(node.value);
-
-    case 'StringLiteral':
-      if (node.raw) return `r"${node.value}"`;
-      return `"${escapeString(node.value)}"`;
-
-    case 'IntegerLiteral':
-      return String(node.value);
-
-    case 'FloatLiteral':
-      return String(node.value);
-
-    case 'IPLiteral':
-      return node.cidr !== undefined ? `${node.value}/${node.cidr}` : node.value;
-
-    case 'FieldAccess': {
-      let s = node.field;
-      if (node.mapKey !== undefined) s += `["${escapeString(node.mapKey)}"]`;
-      if (node.arrayIndex !== undefined) s += `[${node.arrayIndex}]`;
-      return s;
-    }
-
-    case 'NamedList':
-      return node.name.startsWith('$') ? node.name : `$${node.name}`;
-
-    case 'FunctionCall': {
-      const args = node.args.map(a => printNode(a)).join(', ');
-      return `${node.name}(${args})`;
-    }
-
-    case 'Comparison':
-      return `${printNode(node.left)} ${node.operator} ${printNode(node.right)}`;
-
-    case 'Logical':
-      return `${printNode(node.left)} ${node.operator} ${printNode(node.right)}`;
-
-    case 'Not':
-      return `not ${printNode(node.operand)}`;
-
-    case 'InExpression': {
-      const field = printNode(node.field);
-      const neg = node.negated ? 'not ' : '';
-      // Named list: ip.src in $list (no braces)
-      if (node.values.length === 1 && node.values[0].kind === 'NamedList') {
-        return `${neg}${field} in ${printNode(node.values[0])}`;
-      }
-      // Value list: ip.src in {1.2.3.4 5.6.7.8}
-      const values = node.values.map(v => printNode(v)).join(' ');
-      return `${neg}${field} in {${values}}`;
-    }
-
-    case 'Group':
-      return `(${printNode(node.expression)})`;
-
-    case 'ArrayUnpack':
-      return `${printNode(node.field)}[*]`;
-  }
 }
 
 // ── Multi-line printer ───────────────────────────────────────────────
@@ -211,25 +147,6 @@ function printLogicalChain(node: ASTNode, depth: number, opts: Required<FormatOp
   return lines.join('\n');
 }
 
-/** Collect branches of the same operator into a flat list. */
-function collectChain(node: ASTNode, op: string, branches: ASTNode[]): void {
-  if (node.kind === 'Logical' && normalizeOp(node.operator) === op) {
-    collectChain(node.left, op, branches);
-    collectChain(node.right, op, branches);
-  } else {
-    branches.push(node);
-  }
-}
-
-/** Normalize operator to English form for consistency. */
-function normalizeOp(op: string): string {
-  switch (op) {
-    case '&&': return 'and';
-    case '||': return 'or';
-    default: return op;
-  }
-}
-
 /** Print an in-expression with values broken across lines if needed. */
 function printInExpressionMultiline(node: ASTNode & { kind: 'InExpression' }, depth: number, opts: Required<FormatOptions>): string | null {
   const ind = opts.indent.repeat(depth);
@@ -249,10 +166,3 @@ function printInExpressionMultiline(node: ASTNode & { kind: 'InExpression' }, de
   return `${ind}${neg}${field} in {\n${valueLines}\n${ind}}`;
 }
 
-/** Escape special characters in a string literal. */
-/** Escape for Cloudflare expression string literals.
- *  Only `"` needs escaping (to `\"`). Backslashes pass through as-is
- *  because they're regex escapes in Cloudflare expressions, not string escapes. */
-function escapeString(s: string): string {
-  return s.replace(/"/g, '\\"');
-}
