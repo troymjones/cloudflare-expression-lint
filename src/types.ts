@@ -207,6 +207,8 @@ export interface ValidationContext {
   accountLevel?: boolean;
   /** Operator style preference. Default: 'english'. */
   operatorStyle?: OperatorStyle;
+  /** Max items in a literal in-list before suggesting a named list. Default: 10. */
+  maxInListItems?: number;
 }
 
 // ── Lint Result ────────────────────────────────────────────────────────

@@ -107,6 +107,9 @@ export interface ScannerOptions {
    * Default: `'english'`
    */
   operatorStyle?: OperatorStyle;
+
+  /** Max items in a literal in-list before suggesting a named list. Default: 10. */
+  maxInListItems?: number;
 }
 
 // ── Built-in Defaults ────────────────────────────────────────────────
@@ -197,6 +200,7 @@ export function scanYaml(
       allowPlaceholders: true,
       accountLevel: loc.accountLevel,
       operatorStyle: options?.operatorStyle,
+      maxInListItems: options?.maxInListItems,
     };
     const result = validate(loc.expression, ctx);
     return { ...loc, result };

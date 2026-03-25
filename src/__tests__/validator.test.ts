@@ -384,4 +384,43 @@ describe('Validator', () => {
       )).toBe(true);
     });
   });
+
+  describe('long-in-list diagnostic', () => {
+    it('does not flag 9-item in-list (below default threshold of 10)', () => {
+      const values = Array.from({ length: 9 }, (_, i) => `"v${i}"`).join(' ');
+      expect(codes(`(http.host in {${values}})`)).not.toContain('long-in-list');
+    });
+
+    it('flags 10-item in-list at default threshold', () => {
+      const values = Array.from({ length: 10 }, (_, i) => `"v${i}"`).join(' ');
+      expect(codes(`(http.host in {${values}})`)).toContain('long-in-list');
+    });
+
+    it('flags 15-item in-list', () => {
+      const values = Array.from({ length: 15 }, (_, i) => `"v${i}"`).join(' ');
+      const result = validate(`(http.host in {${values}})`, { expressionType: 'filter' });
+      const diag = result.diagnostics.find(d => d.code === 'long-in-list');
+      expect(diag).toBeDefined();
+      expect(diag!.severity).toBe('info');
+      expect(diag!.message).toContain('15 items');
+      expect(diag!.message).toContain('named list');
+    });
+
+    it('does not flag named lists', () => {
+      expect(codes('(ip.src in $allowlist)')).not.toContain('long-in-list');
+    });
+
+    it('respects custom maxInListItems threshold', () => {
+      const values = Array.from({ length: 5 }, (_, i) => `"v${i}"`).join(' ');
+      // 5 items, threshold 5 → should flag
+      expect(codes(`(http.host in {${values}})`, { maxInListItems: 5 })).toContain('long-in-list');
+      // 5 items, threshold 6 → should not flag
+      expect(codes(`(http.host in {${values}})`, { maxInListItems: 6 })).not.toContain('long-in-list');
+    });
+
+    it('works with IP address lists', () => {
+      const values = Array.from({ length: 10 }, (_, i) => `10.0.${i}.0/24`).join(' ');
+      expect(codes(`(ip.src in {${values}})`)).toContain('long-in-list');
+    });
+  });
 });

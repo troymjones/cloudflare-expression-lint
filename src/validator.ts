@@ -171,6 +171,7 @@ class ASTWalker {
         }
         this.validateInExpressionTypes(node);
         this.validateEmptyInList(node);
+        this.checkLongInList(node);
         break;
 
       case 'Group':
@@ -439,6 +440,21 @@ class ASTWalker {
         severity: 'warning',
         message: 'Empty in-list "{}" — this expression will never match',
         code: 'empty-in-list',
+        position: node.position,
+      });
+    }
+  }
+
+  private checkLongInList(node: ASTNode): void {
+    if (node.kind !== 'InExpression') return;
+    // Only check literal value lists, not named lists ($list_name)
+    if (node.values.length === 1 && node.values[0].kind === 'NamedList') return;
+    const threshold = this.context.maxInListItems ?? 10;
+    if (node.values.length >= threshold) {
+      this.diagnostics.push({
+        severity: 'info',
+        message: `In-list has ${node.values.length} items. Consider using a named list ($list_name) for maintainability.`,
+        code: 'long-in-list',
         position: node.position,
       });
     }

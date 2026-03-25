@@ -51,6 +51,7 @@ interface CLIOptions {
   check: boolean;
   convertBlockScalars: boolean;
   maxWidth: number;
+  maxInListItems: number;
   help: boolean;
 }
 
@@ -71,6 +72,7 @@ function parseArgs(argv: string[]): CLIOptions {
     check: false,
     convertBlockScalars: false,
     maxWidth: 120,
+    maxInListItems: 10,
     help: false,
   };
 
@@ -158,6 +160,9 @@ function parseArgs(argv: string[]): CLIOptions {
       case '--max-width':
         opts.maxWidth = parseInt(argv[++i], 10);
         break;
+      case '--max-in-list-items':
+        opts.maxInListItems = parseInt(argv[++i], 10);
+        break;
       default:
         if (!arg.startsWith('-')) {
           opts.files.push(arg);
@@ -188,6 +193,7 @@ function buildScannerOptions(opts: CLIOptions): ScannerOptions | undefined {
         ignoreCodes?: string[];
         accountLevelPaths?: string[];
         operatorStyle?: OperatorStyle;
+        maxInListItems?: number;
       };
       if (config.expressionKeys) {
         scannerOpts.expressionKeys = config.expressionKeys;
@@ -206,6 +212,9 @@ function buildScannerOptions(opts: CLIOptions): ScannerOptions | undefined {
       }
       if (config.operatorStyle) {
         opts.operatorStyle = config.operatorStyle;
+      }
+      if (config.maxInListItems !== undefined) {
+        opts.maxInListItems = config.maxInListItems;
       }
     } catch (err) {
       console.error(`Error reading config file ${configPath}: ${err instanceof Error ? err.message : err}`);
@@ -299,6 +308,8 @@ Options:
   --check                    Dry-run for --fix or --prettify. Exits non-zero if
                              any changes would be made, without modifying files.
   --max-width <n>            Max line width for --prettify (default: 120).
+  --max-in-list-items <n>    Warn when a literal in-list has this many items
+                             or more (default: 10). Suggests using a named list.
   --help, -h                 Show this help
 
 Config File:
@@ -395,6 +406,7 @@ async function main(): Promise<void> {
       expressionType: opts.type,
       phase: opts.phase,
       operatorStyle: opts.operatorStyle,
+      maxInListItems: opts.maxInListItems,
     };
 
     const result = validate(expr, ctx);

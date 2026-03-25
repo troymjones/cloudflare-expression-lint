@@ -450,4 +450,48 @@ describe('Expression Formatter', () => {
       });
     }
   });
+
+  describe('in-list formatting', () => {
+    it('keeps short in-list inline', () => {
+      const expr = '(ip.src in {1.2.3.4 5.6.7.8 9.10.11.12})';
+      const result = formatExpression(expr, { maxWidth: 120 });
+      expect(result).not.toContain('\n');
+    });
+
+    it('breaks long in-list to one value per line', () => {
+      const values = Array.from({ length: 6 }, (_, i) => `"host${i}.example.com"`).join(' ');
+      const expr = `(http.host in {${values}})`;
+      const result = formatExpression(expr, { maxWidth: 80 });
+      expect(result).toContain('\n');
+      // Each value should be on its own line
+      for (let i = 0; i < 6; i++) {
+        expect(result).toContain(`"host${i}.example.com"`);
+      }
+      // Check one-per-line format: each value line has only one value
+      const valueLines = result.split('\n').filter(l => l.trim().startsWith('"'));
+      expect(valueLines.length).toBe(6);
+    });
+
+    it('breaks IP list to one per line when exceeding maxWidth', () => {
+      const expr = '(ip.src in {192.168.1.0/24 10.0.0.0/8 172.16.0.0/12 100.64.0.0/10 198.51.100.0/24 203.0.113.0/24})';
+      const result = formatExpression(expr, { maxWidth: 60 });
+      expect(result).toContain('\n');
+      const ipLines = result.split('\n').filter(l => l.trim().match(/^\d/));
+      expect(ipLines.length).toBe(6);
+    });
+
+    it('preserves { on same line as in', () => {
+      const values = Array.from({ length: 5 }, (_, i) => `"val${i}"`).join(' ');
+      const expr = `(http.host in {${values}})`;
+      const result = formatExpression(expr, { maxWidth: 40 });
+      expect(result).toMatch(/in \{$/m);
+    });
+
+    it('puts } on its own line', () => {
+      const values = Array.from({ length: 5 }, (_, i) => `"val${i}"`).join(' ');
+      const expr = `(http.host in {${values}})`;
+      const result = formatExpression(expr, { maxWidth: 40 });
+      expect(result).toMatch(/^\s*\}$/m);
+    });
+  });
 });

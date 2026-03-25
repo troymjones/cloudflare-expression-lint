@@ -243,23 +243,10 @@ function printInExpressionMultiline(node: ASTNode & { kind: 'InExpression' }, de
     return null; // Use single-line form
   }
 
-  // Break values across lines
-  const lines: string[] = [];
-  let currentLine = '';
-  for (const val of values) {
-    if (currentLine === '') {
-      currentLine = val;
-    } else if (`${ind}  ${currentLine} ${val}`.length <= opts.maxWidth) {
-      currentLine += ` ${val}`;
-    } else {
-      lines.push(currentLine);
-      currentLine = val;
-    }
-  }
-  if (currentLine) lines.push(currentLine);
-
+  // Exceeds maxWidth — break to one value per line
   const indValues = opts.indent.repeat(depth + 1);
-  return `${ind}${neg}${field} in {\n${lines.map(l => `${indValues}${l}`).join('\n')}\n${ind}}`;
+  const valueLines = values.map(v => `${indValues}${v}`).join('\n');
+  return `${ind}${neg}${field} in {\n${valueLines}\n${ind}}`;
 }
 
 /** Escape special characters in a string literal. */
