@@ -472,6 +472,10 @@ describe('Auto-fixer', () => {
       'not (http.cookie eq "a" or http.cookie eq "b")',
       '((http.host eq "a.com") or (http.host eq "b.com"))',
       'http.host eq "a.com" and http.request.method eq "POST" and http.request.uri.path eq "/api"',
+      // In-list expressions
+      'ip.src in {"1.2.3.4" "5.6.7.8" "9.10.11.12"}',
+      '(ip.src in {BLOCKED_IPS}) and (cf.zone.plan eq "ENT")',
+      '(http.host in {"a.com" "b.com" "c.com" "d.com" "e.com"}) and (http.request.method eq "POST")',
     ];
 
     for (const expr of expressions) {

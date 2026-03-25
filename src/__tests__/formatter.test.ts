@@ -493,5 +493,41 @@ describe('Expression Formatter', () => {
       const result = formatExpression(expr, { maxWidth: 40 });
       expect(result).toMatch(/^\s*\}$/m);
     });
+
+    it('handles negated in-list one-per-line', () => {
+      const values = Array.from({ length: 5 }, (_, i) => `"${i}.example.com"`).join(' ');
+      const expr = `(not http.host in {${values}})`;
+      const result = formatExpression(expr, { maxWidth: 60 });
+      expect(result).toContain('not http.host in {');
+      expect(result).toContain('\n');
+    });
+
+    it('handles in-list inside account-level double-wrap', () => {
+      const values = Array.from({ length: 5 }, (_, i) => `"${i}.0.0.0/8"`).join(' ');
+      const expr = `((ip.src in {${values}})) and (cf.zone.plan eq "ENT")`;
+      const result = formatExpression(expr, { maxWidth: 60 });
+      expect(result).toContain('cf.zone.plan eq "ENT"');
+      for (let i = 0; i < 5; i++) {
+        expect(result).toContain(`"${i}.0.0.0/8"`);
+      }
+    });
+
+    it('in-list format is convergent (format → rejoin → reformat is stable)', () => {
+      const values = Array.from({ length: 6 }, (_, i) => `"host${i}.example.com"`).join(' ');
+      const expr = `(http.host in {${values}})`;
+      const pass1 = formatExpression(expr, { maxWidth: 60 });
+      const rejoined = pass1.split('\n').map(l => l.trim()).join(' ');
+      const pass2 = formatExpression(rejoined, { maxWidth: 60 });
+      const rejoined2 = pass2.split('\n').map(l => l.trim()).join(' ');
+      const pass3 = formatExpression(rejoined2, { maxWidth: 60 });
+      expect(pass3).toBe(pass2);
+    });
+
+    it('preserves placeholder in in-list through formatting', () => {
+      const expr = '(ip.src in {BLOCKED_IPS} and http.host eq "test.com")';
+      const result = formatExpression(expr, { maxWidth: 40 });
+      expect(result).toContain('BLOCKED_IPS');
+      expect(result).not.toContain('__ph_');
+    });
   });
 });
