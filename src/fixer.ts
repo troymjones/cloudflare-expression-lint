@@ -226,7 +226,7 @@ function fixDeMorgans(node: ASTNode, fixes: string[]): ASTNode {
           if (branches.every(b => isSimpleCondition(b))) {
             fixes.push('De Morgan: not (A and B) → (not A) or (not B)');
             const negated = branches.map(b => buildGroup(wrapNot(stripGroup(b))));
-            return buildOrChain(negated);
+            return buildGroup(buildOrChain(negated));
           }
         }
       }

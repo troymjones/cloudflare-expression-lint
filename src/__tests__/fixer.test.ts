@@ -216,10 +216,19 @@ describe('Auto-fixer', () => {
       );
     });
 
-    it('not (A and B) → (not A) or (not B)', () => {
+    it('not (A and B) → (not A) or (not B) at top level', () => {
+      // At top level, Builder structure strips the outer group from or-chains
       expect(fix('not (http.cookie eq "a" and http.cookie eq "b")')).toBe(
         '(not http.cookie eq "a") or (not http.cookie eq "b")'
       );
+    });
+
+    it('not (A and B) inside and-chain preserves semantics', () => {
+      // Regression: the or-chain must be wrapped in a group to avoid
+      // breaking the surrounding and-chain's operator precedence
+      const result = fix('(http.host eq "test.com" and not (http.cookie contains "A" and http.cookie contains "B") and not http.cookie contains "C")');
+      expect(result).toContain('((not http.cookie contains "A") or (not http.cookie contains "B"))');
+      expect(result).not.toMatch(/and \(not.*or \(not.*and/);
     });
 
     it('preserves double negation: not (not A) → A', () => {
