@@ -308,6 +308,8 @@ function walkYaml(
             });
           }
         }
+        // Skip recursion — header expressions are fully handled above
+        continue;
       }
 
       // Recurse

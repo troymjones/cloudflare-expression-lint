@@ -64,6 +64,23 @@ rules:
       expect(result.expressions.length).toBe(1);
       expect(result.expressions[0].result.valid).toBe(true);
     });
+
+    it('detects headers[].expression as rewrite_header, not filter (no double-count)', () => {
+      const yaml = `
+transform_request_header_rules:
+  - rules:
+      - description: Set experiment header
+        expression: (http.host eq "example.com")
+        headers:
+          - operation: set
+            name: x-experiment
+            expression: substring(encode_base64(sha256(concat(to_string(ip.src), "salt"))), 0, 1)
+`;
+      const result = scanYaml(yaml, 'test.yaml');
+      const headerExpr = result.expressions.filter(e => e.expression.includes('sha256'));
+      expect(headerExpr.length).toBe(1);
+      expect(headerExpr[0].expressionType).toBe('rewrite_header');
+    });
   });
 
   // ── Phase Inference ────────────────────────────────────────────────
