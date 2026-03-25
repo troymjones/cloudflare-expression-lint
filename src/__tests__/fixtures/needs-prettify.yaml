@@ -1,0 +1,8 @@
+zone:
+  waf_rules:
+    name: test-rules
+    rules:
+      - description: Long expression on one line
+        expression: (http.host eq "api.example.com" and http.request.method eq "POST" and http.request.uri.path eq "/webhook" and not ip.src in $internal)
+        action: block
+        enabled: true

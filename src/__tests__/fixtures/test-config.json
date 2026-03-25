@@ -1,0 +1,8 @@
+{
+  "expressionKeys": {
+    "expression": { "type": "filter" }
+  },
+  "phaseMappings": {
+    "waf_rules": "http_request_firewall_custom"
+  }
+}

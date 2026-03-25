@@ -1,0 +1,8 @@
+zone:
+  waf_rules:
+    name: test-rules
+    rules:
+      - description: Rule with placeholder
+        expression: (http.request.uri.path eq "/api" and any(http.request.headers["x-app"][*] in {__ALLOWED_APPS__}))
+        action: block
+        enabled: true

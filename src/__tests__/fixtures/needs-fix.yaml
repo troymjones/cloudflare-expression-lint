@@ -1,0 +1,12 @@
+zone:
+  waf_rules:
+    name: test-rules
+    rules:
+      - description: Merge groups
+        expression: (http.host eq "test.com") and (http.request.method eq "POST")
+        action: block
+        enabled: true
+      - description: Bare expression
+        expression: http.host eq "test.com"
+        action: block
+        enabled: true

@@ -1,0 +1,8 @@
+zone:
+  waf_rules:
+    name: test-rules
+    rules:
+      - description: Invalid field
+        expression: (http.nonexistent_field eq "test")
+        action: block
+        enabled: true
