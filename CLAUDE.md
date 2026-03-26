@@ -6,18 +6,24 @@ A TypeScript parser, validator, linter, formatter, and auto-fixer for Cloudflare
 ## Project Structure
 - `src/lexer.ts` — Tokenizer (string → Token[]), supports raw strings (r"...")
 - `src/parser.ts` — Recursive-descent parser (Token[] → AST), tracks raw string flag
-- `src/validator.ts` — Semantic validator (AST → Diagnostic[]) with Builder compatibility checking, operator style, ambiguous precedence, deprecated fields, phase validation, function context/limits
-- `src/fixer.ts` — Auto-fixer (AST → AST) for Builder compatibility: wraps bare expressions, merges and-groups, De Morgan's rewrites, operator style normalization
+- `src/validator.ts` — Semantic validator (AST → Diagnostic[]) with operator style, ambiguous precedence, deprecated fields, phase validation, function context/limits
+- `src/builder-compat.ts` — Expression Builder compatibility checker and account-level suffix validation
+- `src/template-detection.ts` — Template placeholder detection (UPPER_CASE and __NAME__ patterns)
+- `src/fixer.ts` — Auto-fixer (AST → AST) for Builder compatibility: wraps bare expressions, merges and-groups, De Morgan's rewrites, or-eq-to-in collapse, operator style normalization
 - `src/formatter.ts` — Prettifier (AST → multi-line string) that breaks on and/or boundaries, never mid-condition. Preserves raw strings.
-- `src/rewriter.ts` — YAML file rewriter that replaces expressions in-place using >- block scalars. Supports converting | and |- to >-
+- `src/ast-utils.ts` — Shared AST utilities: printNode, normalizeOp, collectChain, stripGroup, escapeString
+- `src/placeholders.ts` — Placeholder pre-processing: substitutes __NAME__/UPPER_CASE template variables with synthetic values for parsing
+- `src/rewriter.ts` — YAML file rewriter that replaces expressions in-place using >- block scalars
+- `src/yaml-locator.ts` — Finds expression locations in YAML content (regex-based, handles CRLF, block scalars, plain multi-line, escaped quotes)
 - `src/yaml-scanner.ts` — YAML file scanner with configurable expression key and phase mappings, account-level path detection
 - `src/eslint-plugin.ts` — ESLint plugin adapter (optional, uses yaml-eslint-parser)
-- `src/cli.ts` — CLI with --fix, --prettify, --check, --convert-block-scalars, --config, --operator-style, --warn-exit-code flags
+- `src/cli.ts` — CLI with --fix, --prettify, --check, --convert-block-scalars, --config, --operator-style, --version flags
 - `src/types.ts` — All type definitions (StringLiteralNode has `raw` flag)
-- `src/schemas/fields.ts` — Field registry (211+ fields)
-- `src/schemas/functions.ts` — Function registry (25+ functions)
+- `src/schemas/fields.ts` — Field registry (186+ fields)
+- `src/schemas/functions.ts` — Function registry (29+ functions)
 - `src/schemas/operators.ts` — Operator definitions with type constraints
-- `src/__tests__/` — Test suite (567 tests across 16 files)
+- `schemas/config.schema.json` — JSON schema for .cf-expr-lint.json config file
+- `src/__tests__/` — Test suite (813+ tests across 23 files)
 - `scripts/sync-cloudflare-docs.ts` — Automated sync from cloudflare-docs repo
 
 ## Commands

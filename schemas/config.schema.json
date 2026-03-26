@@ -1,0 +1,62 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/troymjones/cloudflare-expression-lint/schemas/config.schema.json",
+  "title": "cloudflare-expression-lint configuration",
+  "description": "Configuration for the Cloudflare expression linter (.cf-expr-lint.json)",
+  "type": "object",
+  "properties": {
+    "expressionKeys": {
+      "type": "object",
+      "description": "Map of YAML key names to expression type and optional phase hint. Merged with built-in defaults (expression, rewrite_expression, source_url_expression, condition).",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["filter", "rewrite_url", "rewrite_header", "redirect_target"],
+            "description": "The type of expression this key contains"
+          },
+          "phaseHint": {
+            "type": "string",
+            "description": "Cloudflare phase to use for field validation (e.g., http_request_firewall_custom)"
+          }
+        },
+        "required": ["type"]
+      }
+    },
+    "phaseMappings": {
+      "type": "object",
+      "description": "Map of YAML parent key names to Cloudflare phases. Merged with built-in defaults.",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "ignoreCodes": {
+      "type": "array",
+      "description": "Diagnostic codes to suppress (e.g., contains-placeholders, builder-incompatible)",
+      "items": {
+        "type": "string"
+      }
+    },
+    "accountLevelPaths": {
+      "type": "array",
+      "description": "File path patterns for account-level expressions that must end with `and (cf.zone.plan eq \"ENT\")`",
+      "items": {
+        "type": "string"
+      }
+    },
+    "operatorStyle": {
+      "type": "string",
+      "enum": ["english", "clike", "off"],
+      "default": "english",
+      "description": "Operator style to enforce. english: flag C-like operators. clike: flag English operators. off: disable."
+    },
+    "maxInListItems": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 10,
+      "description": "Warn when a literal in-list has this many items or more. Suggests using a named list ($list_name)."
+    }
+  },
+  "additionalProperties": false
+}

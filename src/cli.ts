@@ -84,6 +84,12 @@ function parseArgs(argv: string[]): CLIOptions {
       case '-h':
         opts.help = true;
         break;
+      case '--version':
+      case '-v': {
+        const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf-8'));
+        console.log(pkg.version);
+        process.exit(0);
+      }
       case '--expression':
       case '-e':
         opts.expression = argv[++i];
@@ -311,6 +317,7 @@ Options:
                              Accounts for ~20 chars of YAML indentation.
   --max-in-list-items <n>    Warn when a literal in-list has this many items
                              or more (default: 10). Suggests using a named list.
+  --version, -v              Show version number
   --help, -h                 Show this help
 
 Config File:
