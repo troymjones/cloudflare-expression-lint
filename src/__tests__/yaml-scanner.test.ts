@@ -53,14 +53,20 @@ single_redirects:
       expect(result.expressions.length).toBeGreaterThanOrEqual(1);
     });
 
-    it('detects target_url_expression by default (no custom config needed)', () => {
+    it('detects target_url_expression with config', () => {
       const yaml = `
 single_redirects:
   - description: Redirect images
     source_url_expression: (http.host eq "offers.example.com")
     target_url_expression: regex_replace(http.request.uri.path, "^.+/([^/]+)$", "https://media.example.com/\${1}")
 `;
-      const result = scanYaml(yaml, 'test.yaml');
+      const options: ScannerOptions = {
+        expressionKeys: {
+          'source_url_expression': { type: 'filter', phaseHint: 'http_request_dynamic_redirect' },
+          'target_url_expression': { type: 'redirect_target', phaseHint: 'http_request_dynamic_redirect' },
+        },
+      };
+      const result = scanYaml(yaml, 'test.yaml', options);
       // Should detect both source_url_expression and target_url_expression
       expect(result.expressions.length).toBe(2);
       const target = result.expressions.find(e => e.yamlPath.includes('target_url_expression'));
@@ -75,7 +81,12 @@ single_redirects:
     source_url_expression: (http.host eq "example.com")
     target_url_expression: concat(regex_replace(http.request.uri.path, "^/a", "/b"), regex_replace(http.request.uri.path, "^/c", "/d"))
 `;
-      const result = scanYaml(yaml, 'test.yaml');
+      const options: ScannerOptions = {
+        expressionKeys: {
+          'target_url_expression': { type: 'redirect_target', phaseHint: 'http_request_dynamic_redirect' },
+        },
+      };
+      const result = scanYaml(yaml, 'test.yaml', options);
       const target = result.expressions.find(e => e.yamlPath.includes('target_url_expression'));
       expect(target).toBeDefined();
       // Should have function-max-exceeded error
@@ -237,11 +248,8 @@ cache_rules:
     it('exposes default expression keys for inspection', () => {
       const keys = getDefaultExpressionKeys();
       expect(keys).toHaveProperty('expression');
-      expect(keys).toHaveProperty('source_url_expression');
-      expect(keys).toHaveProperty('target_url_expression');
-      expect(keys).toHaveProperty('rewrite_expression');
-      expect(keys).toHaveProperty('counting_expression');
-      expect(Object.keys(keys).length).toBe(5);
+      // Only 'expression' is a built-in default; others are repo-specific config
+      expect(Object.keys(keys).length).toBe(1);
     });
 
     it('exposes default phase mappings for inspection', () => {

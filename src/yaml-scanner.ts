@@ -125,10 +125,6 @@ export interface ScannerOptions {
  */
 const DEFAULT_EXPRESSION_KEYS: Record<string, ExpressionKeyMapping> = {
   'expression': { type: 'filter' },
-  'source_url_expression': { type: 'filter', phaseHint: 'http_request_dynamic_redirect' },
-  'target_url_expression': { type: 'redirect_target', phaseHint: 'http_request_dynamic_redirect' },
-  'rewrite_expression': { type: 'rewrite_url', phaseHint: 'http_request_transform' },
-  'counting_expression': { type: 'filter' },
 };
 
 /**
