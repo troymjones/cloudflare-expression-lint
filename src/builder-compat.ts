@@ -215,24 +215,45 @@ function checkLogicalCompatibility(ast: ASTNode & { kind: 'Logical' }, diagnosti
   }
 }
 
+/**
+ * Check if a LEAF condition contains patterns that can't be in the Builder.
+ * Only checks individual conditions, NOT the overall expression structure.
+ * - `lower(field) eq "x"` — function as LHS of comparison, NOT Builder-compatible
+ * - `any(field[*] op value)` — IS Builder-compatible (Builder UI supports it)
+ * - `starts_with(field, value)` — IS Builder-compatible
+ */
+function isNonBuilderLeaf(node: ASTNode): boolean {
+  if (node.kind === 'Comparison') {
+    // Function as LHS of comparison: lower(field) eq "x" — not Builder
+    if (node.left.kind === 'FunctionCall' || node.left.kind === 'ArrayUnpack') return true;
+    return false;
+  }
+  if (node.kind === 'InExpression') {
+    // Function/unpack as field in in-expression — not Builder
+    if (node.field.kind === 'FunctionCall' || node.field.kind === 'ArrayUnpack') return true;
+    return false;
+  }
+  return false;
+}
+
+/** Check if the expression contains any leaf that's inherently non-Builder.
+ *  Recurses through logical/group/not structure but delegates to isNonBuilderLeaf
+ *  for individual conditions. This allows structural checks (top-level and between
+ *  groups, etc.) to still run on expressions containing any()/all() with [*]. */
 function containsNonBuilderFunction(node: ASTNode): boolean {
   switch (node.kind) {
-    case 'ArrayUnpack':
-      return true;
-    case 'FunctionCall':
-      return node.args.some(arg => containsNonBuilderFunction(arg));
     case 'Comparison':
-      if (node.left.kind === 'FunctionCall' || node.left.kind === 'ArrayUnpack') return true;
-      return containsNonBuilderFunction(node.left) || containsNonBuilderFunction(node.right);
+    case 'InExpression':
+      return isNonBuilderLeaf(node);
+    case 'FunctionCall':
+      // Top-level function calls (starts_with, ends_with, any, all) are Builder-compatible
+      return false;
     case 'Logical':
       return containsNonBuilderFunction(node.left) || containsNonBuilderFunction(node.right);
     case 'Not':
       return containsNonBuilderFunction(node.operand);
     case 'Group':
       return containsNonBuilderFunction(node.expression);
-    case 'InExpression':
-      if (node.field.kind === 'FunctionCall' || node.field.kind === 'ArrayUnpack') return true;
-      return false;
     default:
       return false;
   }

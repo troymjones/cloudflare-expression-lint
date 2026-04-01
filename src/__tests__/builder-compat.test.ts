@@ -334,10 +334,26 @@ describe('Expression Builder Compatibility', () => {
       expect(hasBuilderWarning('lower(http.host) eq "test.com"')).toBe(false);
     });
 
-    it('skips expressions with array unpack', () => {
+    it('flags bare any() with array unpack (needs wrapping)', () => {
       expect(hasBuilderWarning(
         'any(http.request.headers["accept"][*] contains "text/html")'
+      )).toBe(true);
+    });
+
+    it('accepts wrapped any() with array unpack', () => {
+      expect(hasBuilderWarning(
+        '(any(http.request.headers["accept"][*] contains "text/html"))'
       )).toBe(false);
+    });
+
+    it('still skips lower(field) eq value (truly non-Builder)', () => {
+      expect(hasBuilderWarning('lower(http.host) eq "test.com"')).toBe(false);
+    });
+
+    it('flags structural issues even with any() present', () => {
+      expect(hasBuilderWarning(
+        '(any(http.request.headers["accept"][*] contains "text/html") and http.host eq "test.com") and ((http.request.method eq "POST"))'
+      )).toBe(true);
     });
 
     it('skips xor operator', () => {
