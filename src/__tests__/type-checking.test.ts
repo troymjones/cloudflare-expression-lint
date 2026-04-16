@@ -130,24 +130,53 @@ describe('Operator Type Checking', () => {
 
 describe('Header Key Casing Warning', () => {
   it('warns on uppercase header key', () => {
-    const diagnostics = diags('http.request.headers["Content-Type"] eq "text/html"');
+    const diagnostics = diags('http.request.headers["Content-Type"][0] eq "text/html"');
     expect(diagnostics.some(d => d.code === 'header-key-not-lowercase')).toBe(true);
   });
 
   it('does not warn on lowercase header key', () => {
-    const diagnostics = diags('http.request.headers["content-type"] eq "text/html"');
+    const diagnostics = diags('http.request.headers["content-type"][0] eq "text/html"');
     expect(diagnostics.some(d => d.code === 'header-key-not-lowercase')).toBe(false);
   });
 
   it('warns on mixed-case header key', () => {
-    const diagnostics = diags('http.request.headers["X-Forwarded-For"] eq "1.2.3.4"');
+    const diagnostics = diags('http.request.headers["X-Forwarded-For"][0] eq "1.2.3.4"');
     expect(diagnostics.some(d => d.code === 'header-key-not-lowercase')).toBe(true);
   });
 
   it('header key warning is a warning not an error', () => {
-    const result = validate('http.request.headers["Content-Type"] eq "text/html"', { expressionType: 'filter' });
+    const result = validate('http.request.headers["Content-Type"][0] eq "text/html"', { expressionType: 'filter' });
     expect(result.valid).toBe(true); // warnings don't make it invalid
     expect(result.diagnostics.some(d => d.severity === 'warning' && d.code === 'header-key-not-lowercase')).toBe(true);
+  });
+});
+
+describe('Map Value Type (Array) Operator Mismatch', () => {
+  it('errors on `contains` against bare headers["key"] (returns Array)', () => {
+    const diagnostics = diags('http.request.headers["accept"] contains "text/html"');
+    expect(diagnostics.some(
+      d => d.code === 'operator-type-mismatch' && d.message.includes('Array')
+    )).toBe(true);
+  });
+
+  it('errors on `eq` against bare headers["key"]', () => {
+    const diagnostics = diags('http.request.headers["host"] eq "example.com"');
+    expect(diagnostics.some(
+      d => d.code === 'operator-type-mismatch' && d.message.includes('Array')
+    )).toBe(true);
+  });
+
+  it('accepts `contains` when wrapped in any(...[*])', () => {
+    expect(isValid('any(http.request.headers["accept"][*] contains "text/html")')).toBe(true);
+  });
+
+  it('accepts String comparison when indexed with [0]', () => {
+    expect(isValid('http.request.headers["host"][0] eq "example.com"')).toBe(true);
+  });
+
+  it('errors on `contains` against cookies["name"] (also Map value is Array)', () => {
+    const diagnostics = diags('http.request.cookies["session"] contains "abc"');
+    expect(diagnostics.some(d => d.code === 'operator-type-mismatch')).toBe(true);
   });
 });
 

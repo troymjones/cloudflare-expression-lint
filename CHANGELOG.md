@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.6] - 2026-04-16
+
+### Fixed
+- Map field key access (e.g. `http.request.headers["accept"]`) now resolves to `Array`, not `String`. This catches invalid expressions like `http.request.headers["accept"] contains "text/html"` as `operator-type-mismatch`. Cloudflare's Rules engine treats Map values as `Array<String>`, so a further `[0]` or `[*]` is required to get a String.
+
 ## [0.8.1] - 2026-03-26
 
 ### Fixed

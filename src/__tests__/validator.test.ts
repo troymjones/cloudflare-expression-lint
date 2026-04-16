@@ -127,8 +127,13 @@ describe('Validator', () => {
       expect(diagnostics.some(d => d.code === 'unknown-field')).toBe(true);
     });
 
-    it('does not error on map key access of known map field', () => {
-      expect(isValid('http.request.headers["host"] eq "test.com"')).toBe(true);
+    it('does not error on indexed map access of known map field', () => {
+      expect(isValid('http.request.headers["host"][0] eq "test.com"')).toBe(true);
+    });
+
+    it('errors on map key access compared with String operator (Map value is Array)', () => {
+      const diagnostics = diags('http.request.headers["host"] eq "test.com"');
+      expect(diagnostics.some(d => d.code === 'operator-type-mismatch')).toBe(true);
     });
   });
 

@@ -341,18 +341,30 @@ class ASTWalker {
       case 'FieldAccess': {
         const field = findField(node.field);
         if (field) {
-          // If this field has map key or array index access, resolve to element type
-          if (node.mapKey !== undefined || node.arrayIndex !== undefined) {
-            if (field.type === 'Map') return 'String';
-            if (field.type === 'Array') return 'String';
+          // CF Map fields (e.g. headers, cookies) are Map<String, Array<String>>.
+          // `field["key"]` yields Array<String>; a further `[i]` yields String.
+          if (field.type === 'Map') {
+            if (node.arrayIndex !== undefined) return 'String';
+            if (node.mapKey !== undefined) return 'Array';
+            return 'Map';
+          }
+          if (field.type === 'Array') {
+            if (node.arrayIndex !== undefined) return 'String';
+            return 'Array';
           }
           return field.type;
         }
         const base = findBaseField(node.field);
         if (base) {
-          // Map/Array access yields String (the value type)
-          if (base.type === 'Map') return 'String';
-          if (base.type === 'Array') return 'String';
+          if (base.type === 'Map') {
+            if (node.arrayIndex !== undefined) return 'String';
+            if (node.mapKey !== undefined) return 'Array';
+            return 'Map';
+          }
+          if (base.type === 'Array') {
+            if (node.arrayIndex !== undefined) return 'String';
+            return 'Array';
+          }
         }
         return undefined;
       }
