@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.11.0] - 2026-04-22
+
+### Added
+- **`value-domain-path`** (warning) — flags `http.request.uri.path` literal comparisons where the value doesn't start with `/`. Cloudflare paths always start with `/`, so these comparisons never match (dead code).
+- **`value-domain-path-regex`** (warning) — flags literal path values containing regex metacharacters (`^/`, `.*`, `.+`, `\d`, `\w`, `\s`, trailing `$`) when used with non-regex operators like `eq`/`ne`/`in`. Catches the class of bug where authors write `path ne "^/api.*"` thinking `ne` interprets regex. Raw strings (`r"..."`) are intentionally skipped since they're explicit regex intent.
+
 ## [0.9.0] - 2026-04-22
 
 ### Added

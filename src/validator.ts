@@ -692,6 +692,36 @@ class ASTWalker {
       }
       return;
     }
+
+    if (fieldName === 'http.request.uri.path' || fieldName === 'http.request.uri.path.extension') {
+      if (value.kind !== 'StringLiteral') return;
+      if (value.raw) return; // raw strings are explicit regex intent; skip
+      const v = value.value;
+
+      // Regex-shaped literal: value contains regex metachars meaningful only in `matches`.
+      // Catches the class of bug where someone writes `path ne "^/api.*"` thinking `ne`
+      // interprets regex (it doesn't — it's literal equality).
+      if (/^\^|\.\*|\.\+|\\[dwsDWS]|\$$/.test(v)) {
+        this.diagnostics.push({
+          severity: 'warning',
+          message: `Path "${v}" looks like a regex pattern but is being compared with literal eq/ne. Use \`matches r"..."\` for regex or \`starts_with(path, "/prefix")\` / \`ends_with(path, ".htm")\` for prefix/suffix matches.`,
+          code: 'value-domain-path-regex',
+          position,
+        });
+        return;
+      }
+
+      // Path comparison with a value that doesn't start with /: will never match
+      // since Cloudflare guarantees paths start with /.
+      if (fieldName === 'http.request.uri.path' && !v.startsWith('/')) {
+        this.diagnostics.push({
+          severity: 'warning',
+          message: `Path "${v}" does not start with "/". Cloudflare paths always start with "/", so this comparison will never match.`,
+          code: 'value-domain-path',
+          position,
+        });
+      }
+    }
   }
 }
 

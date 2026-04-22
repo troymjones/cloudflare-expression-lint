@@ -213,6 +213,42 @@ describe('value-domain: ip.src.continent', () => {
   });
 });
 
+describe('value-domain: http.request.uri.path', () => {
+  it('flags path without leading slash', () => {
+    expect(lint('http.request.uri.path eq "admin"', 'value-domain-path')).toHaveLength(1);
+  });
+
+  it('accepts path with leading slash', () => {
+    expect(lint('http.request.uri.path eq "/admin"', 'value-domain-path')).toHaveLength(0);
+  });
+
+  it('flags regex-shaped literal (^/api.*) as regex-as-literal mistake', () => {
+    expect(lint('http.request.uri.path ne "^/api.*"', 'value-domain-path-regex')).toHaveLength(1);
+  });
+
+  it('flags literal ending in $ as regex-as-literal', () => {
+    expect(lint('http.request.uri.path eq ".*.htm$"', 'value-domain-path-regex')).toHaveLength(1);
+  });
+
+  it('does not flag raw string used with `matches`', () => {
+    expect(lint('http.request.uri.path matches r"^/api.*"', 'value-domain-path-regex')).toHaveLength(0);
+  });
+
+  it('does not flag raw string used with eq', () => {
+    expect(lint('http.request.uri.path eq r"^/api.*"', 'value-domain-path-regex')).toHaveLength(0);
+  });
+
+  it('flags each in-list element that does not start with /', () => {
+    const msgs = lint('http.request.uri.path in {"/admin" "login"}', 'value-domain-path');
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0]).toContain('"login"');
+  });
+
+  it('does not flag on `matches` operator with plain string', () => {
+    expect(lint('http.request.uri.path matches "^/api.*"', 'value-domain-path-regex')).toHaveLength(0);
+  });
+});
+
 describe('value-domain: ports', () => {
   it('flags port above 65535', () => {
     expect(lint('cf.edge.server_port eq 99999', 'value-domain-port')).toHaveLength(1);
