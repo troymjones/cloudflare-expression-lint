@@ -19,6 +19,7 @@ import { findComparisonOperator } from './schemas/operators.js';
 import type { FieldType } from './schemas/operators.js';
 import { checkBuilderCompatibility, checkAccountLevelSuffix, isZonePlanSuffixed } from './builder-compat.js';
 import { containsTemplatePlaceholders, containsLegacyPlaceholders } from './template-detection.js';
+import { printNode, normalizeOp, collectChain } from './ast-utils.js';
 import type {
   ASTNode, Diagnostic, DiagnosticSeverity,
   ValidationContext, LintResult, ExpressionType, OperatorStyle,
@@ -110,6 +111,9 @@ export function validate(expression: string, context: ValidationContext): LintRe
     checkAmbiguousPrecedence(ast, diagnostics);
   }
 
+  // Check for tautologically-false `and` chains and tautologically-true `or` chains
+  checkIllogicalConditions(ast, diagnostics);
+
   // Check operator style (configurable: 'english', 'clike', or 'off')
   const operatorStyle = context.operatorStyle ?? 'english';
   if (operatorStyle !== 'off') {
@@ -163,6 +167,7 @@ class ASTWalker {
         this.validateBooleanStyle(node);
         this.validateWildcardPattern(node);
         this.countRegexUsage(node);
+        this.validateValueDomain(node);
         break;
 
       case 'Logical':
@@ -172,6 +177,7 @@ class ASTWalker {
 
       case 'Not':
         this.walk(node.operand);
+        this.checkNegatedComparison(node);
         break;
 
       case 'InExpression':
@@ -182,6 +188,8 @@ class ASTWalker {
         this.validateInExpressionTypes(node);
         this.validateEmptyInList(node);
         this.checkLongInList(node);
+        this.validateDuplicateListEntries(node);
+        this.validateInListValueDomain(node);
         break;
 
       case 'Group':
@@ -568,6 +576,123 @@ class ASTWalker {
       case 'redirect_target': return 'redirect_target';
     }
   }
+
+  // ── Duplicate List Entries ─────────────────────────────────────────
+
+  private validateDuplicateListEntries(node: ASTNode): void {
+    if (node.kind !== 'InExpression') return;
+    if (node.values.length < 2) return;
+
+    const seen = new Map<string, number>();
+    const duplicates: string[] = [];
+    for (const v of node.values) {
+      // Skip named-list-as-value (shouldn't mix with literals in practice)
+      if (v.kind === 'NamedList') continue;
+      const key = printNode(v);
+      const count = (seen.get(key) ?? 0) + 1;
+      seen.set(key, count);
+      if (count === 2) duplicates.push(key);
+    }
+    if (duplicates.length > 0) {
+      const shown = duplicates.slice(0, 3).join(', ');
+      const more = duplicates.length > 3 ? ` and ${duplicates.length - 3} more` : '';
+      this.diagnostics.push({
+        severity: 'warning',
+        message: `Duplicate value(s) in in-list: ${shown}${more}. Each value only needs to appear once.`,
+        code: 'duplicate-list-entries',
+        position: node.position,
+      });
+    }
+  }
+
+  // ── Negated Comparison ─────────────────────────────────────────────
+
+  private checkNegatedComparison(node: ASTNode): void {
+    if (node.kind !== 'Not') return;
+    const inner = node.operand.kind === 'Group' ? node.operand.expression : node.operand;
+    if (inner.kind !== 'Comparison') return;
+    const op = normalizeComparisonOp(inner.operator);
+    if (op !== 'eq' && op !== 'ne') return;
+    // Skip function-call LHS (no clean inverse); leave those alone
+    if (inner.left.kind === 'FunctionCall' || inner.left.kind === 'ArrayUnpack') return;
+    const inverse = op === 'eq' ? 'ne' : 'eq';
+    this.diagnostics.push({
+      severity: 'info',
+      message: `Prefer "${inverse}" over "not ... ${op}": rewrite as \`${printNode(inner.left)} ${inverse} ${printNode(inner.right)}\``,
+      code: 'negated-comparison',
+      position: node.position,
+    });
+  }
+
+  // ── Value Domain Checks ─────────────────────────────────────────────
+
+  private validateValueDomain(node: ASTNode): void {
+    if (node.kind !== 'Comparison') return;
+    const op = normalizeComparisonOp(node.operator);
+    if (op !== 'eq' && op !== 'ne') return;
+    if (node.left.kind !== 'FieldAccess') return;
+    this.checkValueDomainPair(node.left.field, node.right, node.position);
+  }
+
+  private validateInListValueDomain(node: ASTNode): void {
+    if (node.kind !== 'InExpression') return;
+    if (node.field.kind !== 'FieldAccess') return;
+    for (const v of node.values) {
+      if (v.kind === 'NamedList') continue;
+      this.checkValueDomainPair(node.field.field, v, node.position);
+    }
+  }
+
+  private checkValueDomainPair(fieldName: string, value: ASTNode, position?: number): void {
+    if (fieldName === 'http.request.method') {
+      if (value.kind === 'StringLiteral' && !/^[A-Z]+$/.test(value.value)) {
+        this.diagnostics.push({
+          severity: 'warning',
+          message: `HTTP method "${value.value}" — Cloudflare normalizes methods to uppercase ASCII letters, so this value will never match.`,
+          code: 'value-domain-method',
+          position,
+        });
+      }
+      return;
+    }
+
+    if (fieldName === 'ip.src.country' || fieldName === 'ip.geoip.country') {
+      if (value.kind === 'StringLiteral' && !/^[A-Z]{2}$|^T1$|^XX$/.test(value.value)) {
+        this.diagnostics.push({
+          severity: 'warning',
+          message: `Country "${value.value}" — expected a 2-letter uppercase ISO code (e.g., "US", "DE"). Values are case-sensitive.`,
+          code: 'value-domain-country',
+          position,
+        });
+      }
+      return;
+    }
+
+    if (fieldName === 'ip.src.continent' || fieldName === 'ip.geoip.continent') {
+      const valid = new Set(['AF', 'AN', 'AS', 'EU', 'NA', 'OC', 'SA', 'T1']);
+      if (value.kind === 'StringLiteral' && !valid.has(value.value)) {
+        this.diagnostics.push({
+          severity: 'warning',
+          message: `Continent "${value.value}" — expected one of AF, AN, AS, EU, NA, OC, SA, T1. Values are case-sensitive.`,
+          code: 'value-domain-continent',
+          position,
+        });
+      }
+      return;
+    }
+
+    if (fieldName === 'cf.edge.server_port' || fieldName === 'cf.edge.client_port') {
+      if (value.kind === 'IntegerLiteral' && (value.value < 0 || value.value > 65535)) {
+        this.diagnostics.push({
+          severity: 'warning',
+          message: `Port ${value.value} is outside the valid range 0–65535.`,
+          code: 'value-domain-port',
+          position,
+        });
+      }
+      return;
+    }
+  }
 }
 
 /**
@@ -670,3 +795,119 @@ function isUnwrappedAnd(node: ASTNode): boolean {
   return false;
 }
 
+/**
+ * Detect tautologically-impossible conditions:
+ *   `A eq X and A eq Y`   (X != Y)  — always false
+ *   `A ne X or A ne Y`    (X != Y)  — always true
+ *
+ * Fires once per chain. Only flags direct siblings of the same-operator chain;
+ * parenthesized sub-expressions are treated as opaque. Requires literal RHS
+ * (string/int/bool) on both sides and identical LHS (compared structurally).
+ */
+function checkIllogicalConditions(ast: ASTNode, diagnostics: Diagnostic[]): void {
+  const reported = new Set<string>();
+  walkForIllogical(ast, diagnostics, reported);
+}
+
+function walkForIllogical(node: ASTNode, diagnostics: Diagnostic[], reported: Set<string>): void {
+  switch (node.kind) {
+    case 'Logical': {
+      const op = normalizeOp(node.operator);
+      if (op === 'and' || op === 'or') {
+        checkSameFieldConflicts(node, op, diagnostics, reported);
+      }
+      walkForIllogical(node.left, diagnostics, reported);
+      walkForIllogical(node.right, diagnostics, reported);
+      return;
+    }
+    case 'Group':
+      walkForIllogical(node.expression, diagnostics, reported);
+      return;
+    case 'Not':
+      walkForIllogical(node.operand, diagnostics, reported);
+      return;
+    case 'InExpression':
+      walkForIllogical(node.field, diagnostics, reported);
+      return;
+    case 'FunctionCall':
+      for (const arg of node.args) walkForIllogical(arg, diagnostics, reported);
+      return;
+  }
+}
+
+function checkSameFieldConflicts(
+  root: ASTNode & { kind: 'Logical' },
+  op: 'and' | 'or',
+  diagnostics: Diagnostic[],
+  reported: Set<string>,
+): void {
+  const branches: ASTNode[] = [];
+  collectChain(root, op, branches);
+
+  // Only run this at the ROOT of a same-op chain to avoid double-reporting:
+  // if any ancestor of root is also a same-op Logical we'd have already
+  // checked it. Since we can't see the parent, we rely on `reported` de-dupe.
+
+  // For `and`, look for duplicate `eq`/`==` on same field with distinct literals
+  // For `or`,  look for duplicate `ne`/`!=` on same field with distinct literals
+  const targetOp = op === 'and' ? 'eq' : 'ne';
+  const bucket = new Map<string, { literal: string; position?: number }[]>();
+
+  for (const b of branches) {
+    if (b.kind !== 'Comparison') continue;
+    if (normalizeComparisonOp(b.operator) !== targetOp) continue;
+    if (b.left.kind === 'FunctionCall' || b.left.kind === 'ArrayUnpack') continue;
+    if (!isLiteral(b.right)) continue;
+    const leftKey = printNode(b.left);
+    const rightKey = printNode(b.right);
+    const list = bucket.get(leftKey) ?? [];
+    list.push({ literal: rightKey, position: b.position });
+    bucket.set(leftKey, list);
+  }
+
+  for (const [leftKey, entries] of bucket) {
+    const unique = new Set(entries.map(e => e.literal));
+    if (unique.size < 2) continue;
+    const dedupeKey = `${op}:${leftKey}`;
+    if (reported.has(dedupeKey)) continue;
+    reported.add(dedupeKey);
+    const sample = Array.from(unique).slice(0, 3).join(', ');
+    if (op === 'and') {
+      diagnostics.push({
+        severity: 'warning',
+        message: `Illogical \`and\`: "${leftKey}" cannot simultaneously equal multiple different values (${sample}). This condition is always false.`,
+        code: 'illogical-condition',
+        position: entries[0].position,
+      });
+    } else {
+      diagnostics.push({
+        severity: 'warning',
+        message: `Illogical \`or\`: "${leftKey} ne ..." for multiple values (${sample}) is always true — any given value is not-equal-to at least one of them. Did you mean \`and\` or \`not in {...}\`?`,
+        code: 'illogical-condition',
+        position: entries[0].position,
+      });
+    }
+  }
+}
+
+/** Normalize comparison operators including C-like forms to English. */
+function normalizeComparisonOp(op: string): string {
+  switch (op) {
+    case '==': return 'eq';
+    case '!=': return 'ne';
+    case '<':  return 'lt';
+    case '<=': return 'le';
+    case '>':  return 'gt';
+    case '>=': return 'ge';
+    case '~':  return 'matches';
+    default:   return op;
+  }
+}
+
+function isLiteral(node: ASTNode): boolean {
+  return node.kind === 'StringLiteral'
+    || node.kind === 'IntegerLiteral'
+    || node.kind === 'FloatLiteral'
+    || node.kind === 'BooleanLiteral'
+    || node.kind === 'IPLiteral';
+}

@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.0] - 2026-04-22
+
+### Added
+- **`illogical-condition`** (warning) — detects `A eq X and A eq Y` (always false) and `A ne X or A ne Y` (always true) where X and Y are distinct literals on the same field.
+- **`duplicate-list-entries`** (warning) — detects repeated values inside `in { ... }` lists.
+- **`negated-comparison`** (info, auto-fixable) — detects `not A eq X` and `not A ne X`; `--fix` rewrites to `A ne X` / `A eq X`. The rewrite cascades through De Morgan's, producing cleaner Builder-compatible output.
+- **`value-domain-method`** (warning) — HTTP methods must be uppercase ASCII letters.
+- **`value-domain-country`** (warning) — country codes must be 2-letter uppercase ISO-3166 (plus `T1`, `XX`).
+- **`value-domain-continent`** (warning) — must be one of `AF AN AS EU NA OC SA T1`.
+- **`value-domain-port`** (warning) — port fields must be 0–65535.
+
+### Changed
+- Fixer now simplifies `(not A eq X)` to `(A ne X)` as part of the main auto-fix loop. Existing tests updated to reflect the cleaner output.
+
 ## [0.8.6] - 2026-04-16
 
 ### Fixed

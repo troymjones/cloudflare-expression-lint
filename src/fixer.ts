@@ -81,6 +81,7 @@ function fixNode(node: ASTNode, fixes: string[], options?: FixOptions): ASTNode 
   if (isFilter) {
     for (let pass = 0; pass < 5; pass++) {
       const before = printNode(fixed);
+      fixed = fixNegatedComparison(fixed, fixes);
       fixed = fixOrEqToIn(fixed, fixes);
       fixed = fixDeMorgans(fixed, fixes);
       fixed = fixBuilderStructure(fixed, fixes);
@@ -197,6 +198,42 @@ function extractEqField(branch: ASTNode): string | null {
 }
 
 /** Fix De Morgan's law: not (A or B) → (not A and not B), not (A and B) → (not A) or (not B) */
+/**
+ * Rewrite `not X eq Y` → `X ne Y` and `not X ne Y` → `X eq Y`.
+ * Skip when the LHS is a function call or array unpack (no clean inverse).
+ * The Comparison is unwrapped from any immediate Group inside the Not, which
+ * matches how the parser produces `not (X eq Y)`.
+ */
+function fixNegatedComparison(node: ASTNode, fixes: string[]): ASTNode {
+  switch (node.kind) {
+    case 'Not': {
+      const operand = fixNegatedComparison(node.operand, fixes);
+      const inner = operand.kind === 'Group' ? operand.expression : operand;
+      if (inner.kind === 'Comparison') {
+        const op = normalizeOp(inner.operator);
+        if (op === 'eq' || op === 'ne') {
+          if (inner.left.kind !== 'FunctionCall' && inner.left.kind !== 'ArrayUnpack') {
+            const flipped = op === 'eq' ? 'ne' : 'eq';
+            fixes.push(`negated comparison: not ... ${op} → ${flipped}`);
+            return { ...inner, operator: flipped };
+          }
+        }
+      }
+      return operand !== node.operand ? { ...node, operand } : node;
+    }
+    case 'Logical':
+      return {
+        ...node,
+        left: fixNegatedComparison(node.left, fixes),
+        right: fixNegatedComparison(node.right, fixes),
+      };
+    case 'Group':
+      return { ...node, expression: fixNegatedComparison(node.expression, fixes) };
+    default:
+      return node;
+  }
+}
+
 function fixDeMorgans(node: ASTNode, fixes: string[]): ASTNode {
   switch (node.kind) {
     case 'Not': {

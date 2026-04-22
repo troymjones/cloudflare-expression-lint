@@ -28,8 +28,8 @@ describe('Auto-fixer', () => {
       );
     });
 
-    it('wraps bare not expression', () => {
-      expect(fix('not http.host eq "test.com"')).toBe('(not http.host eq "test.com")');
+    it('wraps bare not expression and simplifies to ne', () => {
+      expect(fix('not http.host eq "test.com"')).toBe('(http.host ne "test.com")');
     });
 
     it('does not wrap already-wrapped expression', () => {
@@ -97,7 +97,7 @@ describe('Auto-fixer', () => {
 
     it('adds double-wrap to single-wrapped and-chain', () => {
       expect(fix('(not http.host eq "a.com" and http.request.method eq "POST") and (cf.zone.plan eq "ENT")')).toBe(
-        '((not http.host eq "a.com" and http.request.method eq "POST")) and (cf.zone.plan eq "ENT")'
+        '((http.host ne "a.com" and http.request.method eq "POST")) and (cf.zone.plan eq "ENT")'
       );
     });
 
@@ -162,7 +162,7 @@ describe('Auto-fixer', () => {
   describe('account-level Builder format: ((inner)) and (cf.zone.plan eq "ENT")', () => {
     it('De Morgan + ENT produces double-wrapped result', () => {
       expect(fix('not (http.host eq "a.com" or http.host eq "b.com") and (cf.zone.plan eq "ENT")')).toBe(
-        '((not http.host eq "a.com" and not http.host eq "b.com")) and (cf.zone.plan eq "ENT")'
+        '((http.host ne "a.com" and http.host ne "b.com")) and (cf.zone.plan eq "ENT")'
       );
     });
 
@@ -210,16 +210,16 @@ describe('Auto-fixer', () => {
   });
 
   describe('De Morgan rewrites', () => {
-    it('not (A or B) → (not A and not B)', () => {
+    it('not (A or B) → (not A and not B), which further simplifies to ne', () => {
       expect(fix('not (http.cookie eq "a" or http.cookie eq "b")')).toBe(
-        '(not http.cookie eq "a" and not http.cookie eq "b")'
+        '(http.cookie ne "a" and http.cookie ne "b")'
       );
     });
 
-    it('not (A and B) → (not A) or (not B) at top level', () => {
+    it('not (A and B) → (not A) or (not B) at top level, simplified to ne', () => {
       // At top level, Builder structure strips the outer group from or-chains
       expect(fix('not (http.cookie eq "a" and http.cookie eq "b")')).toBe(
-        '(not http.cookie eq "a") or (not http.cookie eq "b")'
+        '(http.cookie ne "a") or (http.cookie ne "b")'
       );
     });
 
@@ -288,9 +288,9 @@ describe('Auto-fixer', () => {
       );
     });
 
-    it('De Morgan + operator style', () => {
+    it('De Morgan + operator style, simplified via ne', () => {
       expect(fix('not (http.cookie == "a" || http.cookie == "b")')).toBe(
-        '(not http.cookie eq "a" and not http.cookie eq "b")'
+        '(http.cookie ne "a" and http.cookie ne "b")'
       );
     });
   });
@@ -354,12 +354,13 @@ describe('Auto-fixer', () => {
   });
 
   describe('complex combined fixes', () => {
-    it('De Morgan + operator style + structural rewrite', () => {
+    it('De Morgan + operator style + structural rewrite + ne simplification', () => {
       const result = fix('not (http.cookie == "a" || http.cookie == "b") && (http.host == "test.com")');
-      // Should: De Morgan the not(), convert operators, merge the and-groups
-      expect(result).toContain('not http.cookie eq "a"');
-      expect(result).toContain('not http.cookie eq "b"');
+      // Should: De Morgan the not(), convert operators, merge and-groups, simplify not-eq → ne
+      expect(result).toContain('http.cookie ne "a"');
+      expect(result).toContain('http.cookie ne "b"');
       expect(result).toContain('http.host eq "test.com"');
+      expect(result).not.toContain('not ');
       expect(result).not.toContain('==');
       expect(result).not.toContain('||');
       expect(result).not.toContain('&&');
