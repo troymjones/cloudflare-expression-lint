@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.11.1] - 2026-04-23
+
+### Fixed
+- Validator now substitutes template placeholders before parsing, matching the behavior of the fixer and formatter. Previously, expressions with placeholders in positions where only literals are valid (e.g., `any(field[*] in {__PLACEHOLDER__})`) triggered a `parse-error-placeholder` warning, and placeholders in RHS positions (e.g., `http.host eq __PLACEHOLDER__`) triggered an `unknown-field` error that would hard-fail CI. Both cases now parse and validate structurally, with the existing `contains-placeholders` info message preserved to signal that content-level checks can't fully verify placeholder-replaced values.
+
 ## [0.11.0] - 2026-04-22
 
 ### Added

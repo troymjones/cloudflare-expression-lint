@@ -19,6 +19,7 @@ import { findComparisonOperator } from './schemas/operators.js';
 import type { FieldType } from './schemas/operators.js';
 import { checkBuilderCompatibility, checkAccountLevelSuffix, isZonePlanSuffixed } from './builder-compat.js';
 import { containsTemplatePlaceholders, containsLegacyPlaceholders } from './template-detection.js';
+import { substitutePlaceholders } from './placeholders.js';
 import { printNode, normalizeOp, collectChain } from './ast-utils.js';
 import type {
   ASTNode, Diagnostic, DiagnosticSeverity,
@@ -71,13 +72,21 @@ export function validate(expression: string, context: ValidationContext): LintRe
     // Still try to parse — some expressions are partially valid
   }
 
-  // Try to parse
+  // Try to parse. If the expression has placeholders, substitute them with
+  // synthetic string literals first so the parser can build a complete AST.
+  // The same substitution pattern is used by fixer.ts and formatter.ts.
+  const hasPlaceholders = context.allowPlaceholders !== false
+    && containsTemplatePlaceholders(expression);
+  const toParse = hasPlaceholders
+    ? substitutePlaceholders(expression).expression
+    : expression;
+
   let ast: ASTNode | undefined;
   try {
-    ast = parse(expression);
+    ast = parse(toParse);
   } catch (err) {
-    // If the expression has template placeholders, demote parse errors to warnings
-    if (containsTemplatePlaceholders(expression)) {
+    // If substitution didn't help, fall back to the pre-substitution warning path
+    if (hasPlaceholders) {
       diagnostics.push({
         severity: 'warning',
         message: `Parse error (may be caused by template placeholders): ${err instanceof Error ? err.message : String(err)}`,
