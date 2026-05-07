@@ -171,7 +171,7 @@ For projects with many custom mappings, use a `.cf-expr-lint.json` config file:
 | `--format` | `-f` | Output format: `text` (default), `json` |
 | `--quiet` | `-q` | Only show errors (suppress warnings) |
 | `--warn-exit-code` | | Exit code when warnings found (default: 0, use 2 for CI) |
-| `--ignore-code` | | Suppress a diagnostic code (repeatable) |
+| `--ignore-code` | | Suppress a diagnostic code repo-wide (repeatable). For per-expression suppression, use [inline directives](#inline-disable-directives). |
 | `--operator-style` | | Operator style: `english` (default), `clike`, `off` |
 | `--fix` | | Auto-fix expressions for Builder compatibility |
 | `--prettify` | | Reformat long expressions as multi-line `>-` block scalars |
@@ -179,6 +179,58 @@ For projects with many custom mappings, use a `.cf-expr-lint.json` config file:
 | `--max-width` | | Max line width for `--prettify` (default: 120) |
 | `--check` | | Dry-run for `--fix` or `--prettify` (exits 1 if changes needed) |
 | `--help` | `-h` | Show help |
+
+## Inline Disable Directives
+
+Suppress diagnostics from inside YAML files, in addition to the repo-wide `--ignore-code` / `ignoreCodes` config option. All directives accept an optional comma- or space-separated list of diagnostic codes; omit the codes to suppress every code in scope.
+
+### Whole file
+
+```yaml
+# cf-expr-lint-disable-file unknown-field
+
+rules:
+  - expression: '(http.totally_made_up eq "x")'
+```
+
+### Block
+
+```yaml
+rules:
+  - expression: '(http.host eq "a")'   # checked
+
+# cf-expr-lint-disable unknown-field
+  - expression: '(http.bogus eq "b")'  # suppressed
+  - expression: '(http.bogus eq "c")'  # suppressed
+# cf-expr-lint-enable
+
+  - expression: '(http.host eq "d")'   # checked
+```
+
+An unterminated `disable` block runs to end-of-file.
+
+### Next line (works inside `>-` block scalars)
+
+```yaml
+rules:
+  # cf-expr-lint-disable-next-line unknown-field
+  - expression: >-
+      (http.totally_made_up eq "x")
+      and (http.request.uri.path eq "/foo")
+```
+
+When the line following a `disable-next-line` is an expression key (e.g. `expression:`, or a custom key configured via `expressionKeys`), the suppression covers the entire value, including every line of a `>-` block scalar. This is the form to reach for when a multi-line expression triggers a diagnostic.
+
+Blank lines and additional comment lines between the directive and the expression key are skipped.
+
+### Same line
+
+```yaml
+rules:
+  - expression: '(http.totally_made_up eq "x")'  # cf-expr-lint-disable-line unknown-field
+```
+
+Use this for inline single-line expression values where a trailing comment is the most readable form.
 
 ## Expression Builder Compatibility
 

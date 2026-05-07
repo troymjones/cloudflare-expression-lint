@@ -16,6 +16,7 @@ A TypeScript parser, validator, linter, formatter, and auto-fixer for Cloudflare
 - `src/rewriter.ts` — YAML file rewriter that replaces expressions in-place using >- block scalars
 - `src/yaml-locator.ts` — Finds expression locations in YAML content (regex-based, handles CRLF, block scalars, plain multi-line, escaped quotes)
 - `src/yaml-scanner.ts` — YAML file scanner with configurable expression key and phase mappings, account-level path detection
+- `src/directives.ts` — Inline disable-directive parsing (`# cf-expr-lint-disable-file/disable/enable/disable-next-line/disable-line`); anchor-mode covers full `>-` block-scalar values when a directive precedes an expression key
 - `src/eslint-plugin.ts` — ESLint plugin adapter (optional, uses yaml-eslint-parser)
 - `src/cli.ts` — CLI with --fix, --prettify, --check, --convert-block-scalars, --config, --operator-style, --version flags
 - `src/types.ts` — All type definitions (StringLiteralNode has `raw` flag)

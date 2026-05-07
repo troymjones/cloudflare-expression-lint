@@ -36,6 +36,15 @@ export {
 } from './schemas/operators.js';
 export type { OperatorDef, FieldType } from './schemas/operators.js';
 
+// Inline disable directives
+export { analyzeDirectives, isLineSuppressed } from './directives.js';
+export type {
+  Directive,
+  DirectiveKind,
+  SuppressionRange,
+  DirectiveAnalysis,
+} from './directives.js';
+
 // Re-export YAML scanner
 export {
   scanYaml,

@@ -28,9 +28,11 @@ import { validate } from './validator.js';
 import { formatExpression } from './formatter.js';
 import { rewriteExpressions } from './rewriter.js';
 import { fixExpression } from './fixer.js';
-import { scanYaml } from './yaml-scanner.js';
+import { scanYaml, getDefaultExpressionKeys } from './yaml-scanner.js';
 import type { ScannerOptions, ExpressionKeyMapping } from './yaml-scanner.js';
 import type { ValidationContext, ExpressionType, OperatorStyle, Diagnostic } from './types.js';
+import { analyzeDirectives, isLineSuppressed } from './directives.js';
+import type { SuppressionRange } from './directives.js';
 
 interface CLIOptions {
   files: string[];
@@ -301,6 +303,8 @@ Options:
                              (default: 0). Use 2 for CI warning status.
   --ignore-code <code>       Suppress a diagnostic code (repeatable).
                              Also configurable via "ignoreCodes" in config file.
+                             For per-expression suppression, use inline directive
+                             comments (see "Inline Directives" below).
   --operator-style <style>   Operator style: english (default), clike, off.
                              Also configurable via "operatorStyle" in config file.
   --fix                      Auto-fix expressions in YAML files for Builder
@@ -342,6 +346,29 @@ Config File:
   Built-in phase mappings include Cloudflare phase names and common
   shorthands like "cache_rules" and "single_redirects".
 
+Inline Directives:
+  Suppress diagnostics in YAML files with comment directives. Optional
+  comma- or space-separated diagnostic codes narrow the scope; omitting
+  codes suppresses all codes within the directive's range.
+
+  # cf-expr-lint-disable-file [code,...]
+      Suppresses diagnostics for the entire file.
+
+  # cf-expr-lint-disable [code,...]
+  ...
+  # cf-expr-lint-enable [code,...]
+      Suppresses diagnostics on lines between the two directives.
+
+  # cf-expr-lint-disable-next-line [code,...]
+  expression: >-
+    ...
+      Suppresses diagnostics on the following expression. When the next
+      line is an expression key, the suppression covers the entire value
+      (including all lines of a >- block scalar).
+
+  expression: 'http.host eq "x"'  # cf-expr-lint-disable-line
+      Suppresses diagnostics on the same line as the directive.
+
 Examples:
   # Scan with defaults (detects "expression" keys, infers phase from context)
   cf-expr-lint config/**/*.yaml
@@ -367,6 +394,23 @@ function filterDiagnostics(diagnostics: Diagnostic[], ignoreCodes: string[]): Di
   if (ignoreCodes.length === 0) return diagnostics;
   const ignoreSet = new Set(ignoreCodes);
   return diagnostics.filter(d => !ignoreSet.has(d.code));
+}
+
+function applyDirectiveFilter<T extends { expressions: { result: { diagnostics: Diagnostic[] } }[] }>(
+  scanResult: T,
+  ranges: SuppressionRange[],
+  keyLines: { keyLine: number }[],
+): T {
+  if (ranges.length === 0) return scanResult;
+  const filteredExpressions = scanResult.expressions.map((expr, idx) => {
+    const keyLine = keyLines[idx]?.keyLine;
+    if (keyLine === undefined) return expr;
+    const diagnostics = expr.result.diagnostics.filter(
+      d => !isLineSuppressed(ranges, keyLine, d.code),
+    );
+    return { ...expr, result: { ...expr.result, diagnostics } };
+  });
+  return { ...scanResult, expressions: filteredExpressions };
 }
 
 function formatDiagnostic(d: Diagnostic): string {
@@ -574,6 +618,13 @@ async function main(): Promise<void> {
   let totalErrors = 0;
   let totalWarnings = 0;
 
+  // Build the set of expression keys (defaults + user-configured) once.
+  // Used to recognize expression-key lines for directive anchor mode.
+  const expressionKeySet = new Set<string>([
+    ...Object.keys(getDefaultExpressionKeys()),
+    ...Object.keys(scannerOpts?.expressionKeys ?? {}),
+  ]);
+
   for (const file of expandedFiles) {
     const absPath = resolve(file);
     let content: string;
@@ -593,14 +644,26 @@ async function main(): Promise<void> {
       continue;
     }
 
+    const { ranges: directiveRanges, expressionKeyLines } = analyzeDirectives(
+      content,
+      expressionKeySet,
+    );
+
     if (opts.format === 'json') {
-      jsonResults.push(scanResult);
+      // Apply directive filtering before emitting JSON, too.
+      const filteredScan = applyDirectiveFilter(scanResult, directiveRanges, expressionKeyLines);
+      jsonResults.push(filteredScan);
       continue;
     }
 
-    for (const expr of scanResult.expressions) {
+    for (let exprIdx = 0; exprIdx < scanResult.expressions.length; exprIdx++) {
+      const expr = scanResult.expressions[exprIdx];
       totalExpressions++;
-      const diags = filterDiagnostics(expr.result.diagnostics, opts.ignoreCodes);
+      const keyLine = expressionKeyLines[exprIdx]?.keyLine;
+      const directiveFiltered = keyLine !== undefined
+        ? expr.result.diagnostics.filter(d => !isLineSuppressed(directiveRanges, keyLine, d.code))
+        : expr.result.diagnostics;
+      const diags = filterDiagnostics(directiveFiltered, opts.ignoreCodes);
       const displayDiags = opts.quiet
         ? diags.filter(d => d.severity === 'error')
         : diags;

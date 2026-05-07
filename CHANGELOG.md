@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.0] - 2026-05-07
+
+### Added
+- **Inline disable directives** for suppressing diagnostics from within YAML files, in addition to the existing repo-wide `--ignore-code` / `ignoreCodes` config option. Four standard scopes are supported, each accepting an optional comma- or space-separated list of diagnostic codes (omit codes to suppress all):
+  - `# cf-expr-lint-disable-file [codes]` — whole file.
+  - `# cf-expr-lint-disable [codes]` … `# cf-expr-lint-enable [codes]` — block between the two directives.
+  - `# cf-expr-lint-disable-next-line [codes]` — next non-blank, non-comment line. When that line is an expression key (`expression: >-`, etc.), the suppression covers the entire value, including all lines of a `>-` block scalar.
+  - `# cf-expr-lint-disable-line [codes]` — same line as the directive (intended as a trailing comment on inline expression values).
+- `analyzeDirectives` and `isLineSuppressed` exported from the public API for consumers that want to apply the same filtering programmatically.
+
 ## [0.11.1] - 2026-04-23
 
 ### Fixed
