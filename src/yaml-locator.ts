@@ -68,13 +68,25 @@ export function findExpressionLocation(
     // ── Inline value ──────────────────────────────────────────────
     if (value && !isBlockScalarIndicator(value.trim())) {
       let unquoted = value.replace(/^['"]|['"]$/g, '').trim();
+      const isDoubleQuoted = value.trim().startsWith('"');
       // Unescape YAML double-quoted string escapes
-      if (value.trim().startsWith('"')) {
-        unquoted = unquoted.replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+      if (isDoubleQuoted) {
+        unquoted = unescapeDoubleQuoted(unquoted);
       }
-      if (unquoted === trimmed || value.trim() === trimmed) {
+      // A double-quoted scalar can encode newlines as \n, so compare the
+      // collapsed form too. Flag the style so the rewriter normalizes it
+      // rather than leaving an escaped one-liner in place.
+      const collapsed = collapseWhitespace(unquoted);
+      if (unquoted === trimmed || collapsed === trimmed || value.trim() === trimmed) {
         const lineEnd = offsets[i] + line.length + 1;
-        return { lineStart: offsets[i], lineEnd, indent, key: `${key}:` };
+        const escaped = isDoubleQuoted && /\\[nrt]/.test(value);
+        return {
+          lineStart: offsets[i],
+          lineEnd,
+          indent,
+          key: `${key}:`,
+          ...(escaped ? { isBlockScalar: 'double-quoted-escaped' } : {}),
+        };
       }
 
       // Plain multi-line value (wraps across lines without block scalar indicator)
@@ -106,6 +118,22 @@ const BLOCK_SCALAR_INDICATORS = new Set(['|', '>-', '>', '|+', '|-', '>+']);
 
 function isBlockScalarIndicator(value: string): boolean {
   return BLOCK_SCALAR_INDICATORS.has(value);
+}
+
+/** Unescape the YAML double-quoted escapes that can appear in an expression. */
+function unescapeDoubleQuoted(value: string): string {
+  return value.replace(/\\(["\\/nrt])/g, (_m, ch) => {
+    switch (ch) {
+      case 'n': return '\n';
+      case 'r': return '\r';
+      case 't': return '\t';
+      default: return ch;
+    }
+  });
+}
+
+function collapseWhitespace(value: string): string {
+  return value.split('\n').map(l => l.trim()).filter(l => l !== '').join(' ').trim();
 }
 
 function countIndent(line: string): number {

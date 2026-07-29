@@ -55,10 +55,15 @@ export function rewriteExpressions(
     const formatted = formatExpression(exprToFormat, options);
     const isMultiLine = formatted.includes('\n');
 
-    // Skip if no change needed and not converting block scalars
+    // Skip if no change needed and not converting block scalars.
+    // A value containing newlines still needs inspecting even when its
+    // canonical form is a short single line: the YAML representation may be a
+    // double-quoted scalar with \n escapes, which is never the canonical form.
     const hasReplacement = options?.replacements?.has(canonicalExpr) ?? false;
-    if (!hasReplacement && formatted === canonicalExpr && !options?.convertBlockScalars) continue;
-    if (!hasReplacement && !isMultiLine && !options?.convertBlockScalars) continue;
+    const valueSpansLines = expr.expression.includes('\n');
+    const mustInspect = hasReplacement || options?.convertBlockScalars || valueSpansLines;
+    if (!mustInspect && formatted === canonicalExpr) continue;
+    if (!mustInspect && !isMultiLine) continue;
 
     // Find all occurrences in the file (same expression may appear multiple times)
     let searchFrom = modified.length;

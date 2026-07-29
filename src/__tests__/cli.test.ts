@@ -218,3 +218,40 @@ describe('CLI', () => {
     });
   });
 });
+
+describe('CLI --fix combined with --prettify', () => {
+  let tmpDir: string;
+  beforeEach(() => { tmpDir = mkdtempSync(join(tmpdir(), 'cf-expr-both-')); });
+  afterEach(() => { rmSync(tmpDir, { recursive: true, force: true }); });
+
+  // A file needing only formatting (no semantic fix) must still be formatted
+  // when both flags are passed. Previously --fix short-circuited and exited.
+  const needsFormatOnly =
+    'rules:\n' +
+    '  - expression: (http.host eq "test.com" and starts_with(http.request.uri.path, "/a/long/enough/path/to/wrap/the/line") and http.request.method eq "POST")\n';
+
+  it('--fix --prettify formats a file that needs no semantic fix', () => {
+    const file = join(tmpDir, 'test.yaml');
+    writeFileSync(file, needsFormatOnly);
+    const { exitCode } = run(['--fix', '--prettify', file]);
+    expect(exitCode).toBe(0);
+    expect(readFileSync(file, 'utf-8')).toContain('expression: >-');
+  });
+
+  it('--fix --prettify --check reports formatting work, not just fixes', () => {
+    const file = join(tmpDir, 'test.yaml');
+    writeFileSync(file, needsFormatOnly);
+    const { stdout, exitCode } = run(['--fix', '--prettify', '--check', file]);
+    expect(exitCode).toBe(1);
+    expect(stdout).toContain('need formatting');
+    // and it must not have modified the file in --check mode
+    expect(readFileSync(file, 'utf-8')).toBe(needsFormatOnly);
+  });
+
+  it('--fix --prettify --check exits 0 on an already-clean file', () => {
+    const file = join(tmpDir, 'test.yaml');
+    writeFileSync(file, 'rules:\n  - expression: (http.host eq "test.com")\n');
+    const { exitCode } = run(['--fix', '--prettify', '--check', file]);
+    expect(exitCode).toBe(0);
+  });
+});

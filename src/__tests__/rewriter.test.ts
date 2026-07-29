@@ -771,3 +771,56 @@ describe('rewriteExpressions with replacements', () => {
     expect(prettifyResult.content).toBe(fixResult.content);
   });
 });
+
+describe('escaped-newline double-quoted scalars', () => {
+  // A double-quoted scalar can encode newlines as \n. This is never the
+  // canonical representation, so the rewriter should normalize it.
+  const shortValue = '(\n  http.host eq "test.com"\n  and http.request.method eq "POST"\n)';
+  const shortYaml =
+    '    expression: "(\\n  http.host eq \\"test.com\\"\\n  and http.request.method eq \\"POST\\"\\n)"\n' +
+    '    enabled: true\n';
+
+  it('locates an expression written with \\n escapes', () => {
+    const loc = findExpressionLocation(shortYaml, shortValue);
+    expect(loc).not.toBeNull();
+    expect(loc!.key).toBe('expression:');
+    expect(loc!.isBlockScalar).toBe('double-quoted-escaped');
+  });
+
+  it('does not flag a double-quoted scalar without escapes', () => {
+    const content = '    expression: "(http.host eq \\"test.com\\")"\n';
+    const loc = findExpressionLocation(content, '(http.host eq "test.com")');
+    expect(loc).not.toBeNull();
+    expect(loc!.isBlockScalar).toBeUndefined();
+  });
+
+  it('rewrites a short escaped-newline scalar to inline', () => {
+    const result = rewriteExpressions(shortYaml, [{ expression: shortValue }]);
+    expect(result.count).toBe(1);
+    expect(result.content).not.toContain('\\n');
+    expect(result.content).toContain('expression: (http.host eq "test.com" and http.request.method eq "POST")');
+    expect(result.content).toContain('    enabled: true');
+  });
+
+  it('rewrites a long escaped-newline scalar to a >- block', () => {
+    const longValue =
+      '(\n  http.host eq "test.com"\n' +
+      '  and starts_with(http.request.uri.path, "/some/fairly/long/prefix/here")\n' +
+      '  and http.request.method eq "POST"\n' +
+      '  and not http.request.uri.query contains "skip=true"\n)';
+    const yaml = `    expression: ${JSON.stringify(longValue)}\n    enabled: true\n`;
+    const result = rewriteExpressions(yaml, [{ expression: longValue }]);
+    expect(result.count).toBe(1);
+    expect(result.content).toContain('expression: >-');
+    expect(result.content).not.toContain('\\n');
+    expect(result.content).toContain('    enabled: true');
+  });
+
+  it('leaves an already-canonical >- block untouched', () => {
+    const value = '(http.host eq "test.com" and http.request.method eq "POST")';
+    const content = `    expression: ${value}\n`;
+    const result = rewriteExpressions(content, [{ expression: value }]);
+    expect(result.count).toBe(0);
+    expect(result.content).toBe(content);
+  });
+});

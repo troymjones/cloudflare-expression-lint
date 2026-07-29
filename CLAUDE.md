@@ -14,7 +14,7 @@ A TypeScript parser, validator, linter, formatter, and auto-fixer for Cloudflare
 - `src/ast-utils.ts` — Shared AST utilities: printNode, normalizeOp, collectChain, stripGroup, escapeString
 - `src/placeholders.ts` — Placeholder pre-processing: substitutes __NAME__/UPPER_CASE template variables with synthetic values for parsing
 - `src/rewriter.ts` — YAML file rewriter that replaces expressions in-place using >- block scalars
-- `src/yaml-locator.ts` — Finds expression locations in YAML content (regex-based, handles CRLF, block scalars, plain multi-line, escaped quotes)
+- `src/yaml-locator.ts` — Finds expression locations in YAML content (regex-based, handles CRLF, block scalars, plain multi-line, escaped quotes, and double-quoted scalars with `\n` escapes — reported as `double-quoted-escaped` so the rewriter normalizes them)
 - `src/yaml-scanner.ts` — YAML file scanner with configurable expression key and phase mappings, account-level path detection
 - `src/directives.ts` — Inline disable-directive parsing (`# cf-expr-lint-disable-file/disable/enable/disable-next-line/disable-line`); anchor-mode covers full `>-` block-scalar values when a directive precedes an expression key
 - `src/eslint-plugin.ts` — ESLint plugin adapter (optional, uses yaml-eslint-parser)
@@ -39,6 +39,7 @@ A TypeScript parser, validator, linter, formatter, and auto-fixer for Cloudflare
 - `node dist/cli.js --prettify --check config/**/*.yaml` — Dry-run prettify check
 - `npm run sync-docs` — Check for Cloudflare field/function updates (dry run)
 - `npm run sync-docs:apply` — Apply field/function updates from Cloudflare docs
+- `node dist/cli.js --fix --prettify config/**/*.yaml` — Apply both; `--fix` alone skips files that need only formatting
 
 ## Publishing
 ```bash

@@ -507,6 +507,10 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // Carried across when --fix and --prettify are combined
+  let fixedCount = 0;
+  let fixedFiles = 0;
+
   // ── Fix mode ────────────────────────────────────────────────────
   if (opts.fix) {
     let totalFixed = 0;
@@ -555,17 +559,25 @@ async function main(): Promise<void> {
       }
     }
 
-    if (opts.check) {
-      if (totalFixed > 0) {
-        console.log(`\n${totalFixed} expressions in ${totalFiles} files need fixing`);
-        process.exit(1);
+    // When --prettify is also set, fall through so formatting is applied too.
+    // Fix only rewrites files that had a semantic fix, so files needing just
+    // formatting would otherwise be left untouched.
+    if (!opts.prettify) {
+      if (opts.check) {
+        if (totalFixed > 0) {
+          console.log(`\n${totalFixed} expressions in ${totalFiles} files need fixing`);
+          process.exit(1);
+        }
+        console.log('\nAll expressions are already fixed');
+        process.exit(0);
       }
-      console.log('\nAll expressions are already fixed');
+
+      console.log(`\nFixed ${totalFixed} expressions in ${totalFiles} files`);
       process.exit(0);
     }
 
-    console.log(`\nFixed ${totalFixed} expressions in ${totalFiles} files`);
-    process.exit(0);
+    fixedCount = totalFixed;
+    fixedFiles = totalFiles;
   }
 
   // ── Prettify mode ────────────────────────────────────────────────
@@ -602,15 +614,17 @@ async function main(): Promise<void> {
     }
 
     if (opts.check) {
-      if (totalFormatted > 0) {
-        console.log(`\n${totalFormatted} expressions in ${totalFiles} files need formatting`);
+      if (totalFormatted > 0 || fixedCount > 0) {
+        if (fixedCount > 0) console.log(`\n${fixedCount} expressions in ${fixedFiles} files need fixing`);
+        if (totalFormatted > 0) console.log(`${totalFormatted} expressions in ${totalFiles} files need formatting`);
         process.exit(1);
       }
-      console.log('\nAll expressions are already formatted');
+      console.log('\nAll expressions are already fixed and formatted');
       process.exit(0);
     }
 
-    console.log(`\nFormatted ${totalFormatted} expressions in ${totalFiles} files`);
+    if (fixedCount > 0) console.log(`\nFixed ${fixedCount} expressions in ${fixedFiles} files`);
+    console.log(`${fixedCount > 0 ? '' : '\n'}Formatted ${totalFormatted} expressions in ${totalFiles} files`);
     process.exit(0);
   }
 

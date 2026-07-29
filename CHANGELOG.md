@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.1] - 2026-07-29
+
+### Fixed
+- **Escaped-newline scalars are now detected and normalized.** An expression written as a double-quoted YAML scalar with embedded `\n` escapes (`expression: "(\n  http.host eq \"example.com\"\n)"`) was invisible to the rewriter: the locator unescaped `\"` and `\\` but not `\n`, so the value never matched and `findExpressionLocation` returned `null`. `--fix`, `--prettify` and `--convert-block-scalars` were all silent no-ops on this pattern, which let it spread unnoticed. Such scalars are now located, reported, and rewritten to inline (short) or `>-` (long), preserving the stored value exactly.
+- **`--fix --prettify` now applies both** instead of behaving as `--fix` alone. Fix mode exited before prettify mode could run, and only rewrote files that had a semantic fix, so files needing only formatting were left untouched and the combination silently under-reported. `--check` now reports fix and format counts separately and exits 1 if either has work.
+
 ## [0.12.0] - 2026-05-07
 
 ### Added
