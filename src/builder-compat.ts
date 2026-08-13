@@ -2,8 +2,9 @@
  * Expression Builder compatibility checker.
  *
  * Checks whether a Cloudflare expression can be represented in the
- * Cloudflare Dashboard's Expression Builder UI. Expressions that
- * can't be represented get an info-level diagnostic.
+ * Cloudflare Dashboard's Expression Builder UI. Structural issues are
+ * info-level; a missing outer wrap is `builder-unwrapped` at warning
+ * level, since it is always mechanically fixable by `--fix`.
  */
 
 import type { ASTNode, Diagnostic } from './types.js';
@@ -15,9 +16,9 @@ export function checkBuilderCompatibility(ast: ASTNode, diagnostics: Diagnostic[
 
   if (ast.kind === 'Comparison' || ast.kind === 'InExpression' || ast.kind === 'FunctionCall') {
     diagnostics.push({
-      severity: 'info',
+      severity: 'warning',
       message: 'Wrap in parentheses for Expression Builder compatibility: (field op value)',
-      code: 'builder-incompatible',
+      code: 'builder-unwrapped',
     });
     return;
   }
@@ -107,9 +108,9 @@ function checkNotCompatibility(ast: ASTNode & { kind: 'Not' }, diagnostics: Diag
     }
   } else {
     diagnostics.push({
-      severity: 'info',
+      severity: 'warning',
       message: 'Wrap in parentheses for Expression Builder compatibility: (not field op value)',
-      code: 'builder-incompatible',
+      code: 'builder-unwrapped',
     });
   }
 }
@@ -201,9 +202,9 @@ function checkLogicalCompatibility(ast: ASTNode & { kind: 'Logical' }, diagnosti
       }
     } else if (isBuilderAndGroup(ast)) {
       diagnostics.push({
-        severity: 'info',
+        severity: 'warning',
         message: 'Wrap and-chain in parentheses for Expression Builder compatibility: (A and B and C)',
-        code: 'builder-incompatible',
+        code: 'builder-unwrapped',
       });
     } else {
       diagnostics.push({

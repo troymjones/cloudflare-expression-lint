@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.13.0] - 2026-08-13
+
+### Changed
+- **A missing outer wrap is now a `builder-unwrapped` warning** instead of an info-level `builder-incompatible` diagnostic. Three cases move: a bare comparison, in-expression or function call (`http.host eq "a"`), a bare `not` condition (`not http.host eq "a"`), and a bare and-chain (`A and B and C`). These were reported but never surfaced: info diagnostics are excluded from the error and warning counts, so a run containing only them printed `0 errors, 0 warnings` and exited 0, which reads as a pass in CI. All three are always mechanically fixable by `--fix`, unlike the structural checks, so they warrant a status of their own.
+- Structural Builder issues (`or` nested inside `and`, and between groups, De Morgan candidates) keep `builder-incompatible` at info. They often have no safe automatic rewrite, so promoting them would produce permanent noise.
+
+### Upgrade note
+With `--warn-exit-code 2`, a previously silent unwrapped expression now exits 2. Suppress with `--ignore-code builder-unwrapped` or `"ignoreCodes": ["builder-unwrapped"]`, which leaves the info-level checks in place.
+
 ## [0.12.1] - 2026-07-29
 
 ### Fixed

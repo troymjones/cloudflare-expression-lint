@@ -320,6 +320,7 @@ const pretty = formatExpression('(A and B and C)', { maxWidth: 40 });
 | `too-many-regex` | warning | More than 64 regex patterns |
 | `header-key-not-lowercase` | warning | Header map key should be lowercase |
 | `invalid-wildcard-pattern` | warning | Wildcard contains `**` |
+| `builder-unwrapped` | warning | Expression is not wrapped in parentheses |
 | `builder-incompatible` | info | Not in Expression Builder format |
 | `prefer-english-operator` | info | Suggests English notation (`eq`, `and`) |
 | `prefer-clike-operator` | info | Suggests C-like notation (`==`, `&&`) |

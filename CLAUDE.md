@@ -55,7 +55,10 @@ The Builder requires:
 - Each condition: bare comparison, in-expression, boolean field, or function (starts_with, ends_with)
 - Conditions inside and-groups must NOT be individually wrapped: `(A and B)` not `((A) and (B))`
 
-NOT Builder-compatible (with `--fix` auto-rewrites):
+Not wrapped at all — `builder-unwrapped`, warning severity, `--fix` wraps:
+- `A op B` / `not A op B` / `A and B and C` → `(A op B)` / `(not A op B)` / `(A and B and C)`
+
+NOT Builder-compatible — `builder-incompatible`, info severity (with `--fix` auto-rewrites):
 - `(A) and (B)` → merge: `(A and B)`
 - `(A or B)` → split: `(A) or (B)`
 - `not (A)` → move not inside: `(not A)`

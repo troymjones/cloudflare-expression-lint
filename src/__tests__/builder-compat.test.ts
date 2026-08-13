@@ -6,12 +6,18 @@ function diags(expr: string): Diagnostic[] {
   return validate(expr, { expressionType: 'filter' }).diagnostics;
 }
 
+const BUILDER_CODES = ['builder-incompatible', 'builder-unwrapped'];
+
 function hasBuilderWarning(expr: string): boolean {
-  return diags(expr).some(d => d.code === 'builder-incompatible');
+  return diags(expr).some(d => BUILDER_CODES.includes(d.code));
 }
 
 function builderMsg(expr: string): string | undefined {
-  return diags(expr).find(d => d.code === 'builder-incompatible')?.message;
+  return diags(expr).find(d => BUILDER_CODES.includes(d.code))?.message;
+}
+
+function builderDiag(expr: string): Diagnostic | undefined {
+  return diags(expr).find(d => BUILDER_CODES.includes(d.code));
 }
 
 describe('Expression Builder Compatibility', () => {
@@ -364,9 +370,39 @@ describe('Expression Builder Compatibility', () => {
   // ── Severity and context ─────────────────────────────────────────
 
   describe('diagnostic properties', () => {
-    it('is info severity', () => {
-      const d = diags('http.host eq "test.com"').find(d => d.code === 'builder-incompatible');
+    it('structural issues are info severity', () => {
+      const d = builderDiag('(http.host eq "a" or http.host eq "b") and http.request.method eq "GET"');
+      expect(d?.code).toBe('builder-incompatible');
       expect(d?.severity).toBe('info');
+    });
+
+    it('bare comparison is a builder-unwrapped warning', () => {
+      const d = builderDiag('http.host eq "test.com"');
+      expect(d?.code).toBe('builder-unwrapped');
+      expect(d?.severity).toBe('warning');
+    });
+
+    it('bare and-chain is a builder-unwrapped warning', () => {
+      const d = builderDiag('http.host eq "test.com" and http.request.method eq "OPTIONS" and http.request.uri.path eq "/x"');
+      expect(d?.code).toBe('builder-unwrapped');
+      expect(d?.severity).toBe('warning');
+    });
+
+    it('bare not comparison is a builder-unwrapped warning', () => {
+      const d = builderDiag('not http.host eq "test.com"');
+      expect(d?.code).toBe('builder-unwrapped');
+      expect(d?.severity).toBe('warning');
+    });
+
+    it('bare function call is a builder-unwrapped warning', () => {
+      const d = builderDiag('starts_with(http.request.uri.path, "/a")');
+      expect(d?.code).toBe('builder-unwrapped');
+      expect(d?.severity).toBe('warning');
+    });
+
+    it('builder-unwrapped is suppressible on its own', () => {
+      expect(hasBuilderWarning('(http.host eq "a") and (http.host eq "b")')).toBe(true);
+      expect(builderDiag('(http.host eq "a") and (http.host eq "b")')?.code).toBe('builder-incompatible');
     });
 
     it('does not affect validity', () => {
@@ -376,7 +412,7 @@ describe('Expression Builder Compatibility', () => {
 
     it('only applies to filter expressions', () => {
       const result = validate('concat("/m", http.request.uri.path)', { expressionType: 'rewrite_url' });
-      expect(result.diagnostics.some(d => d.code === 'builder-incompatible')).toBe(false);
+      expect(result.diagnostics.some(d => BUILDER_CODES.includes(d.code))).toBe(false);
     });
 
     it('checks filter part of account-level expressions', () => {
@@ -384,25 +420,25 @@ describe('Expression Builder Compatibility', () => {
       const r1 = validate('(http.host eq "test.com") and (cf.zone.plan eq "ENT")', {
         expressionType: 'filter', accountLevel: true,
       });
-      expect(r1.diagnostics.some(d => d.code === 'builder-incompatible')).toBe(false);
+      expect(r1.diagnostics.some(d => BUILDER_CODES.includes(d.code))).toBe(false);
 
       // Unwrapped filter + ENT — should flag
       const r2 = validate('http.host eq "test.com" and (cf.zone.plan eq "ENT")', {
         expressionType: 'filter', accountLevel: true,
       });
-      expect(r2.diagnostics.some(d => d.code === 'builder-incompatible')).toBe(true);
+      expect(r2.diagnostics.some(d => BUILDER_CODES.includes(d.code))).toBe(true);
 
       // Standalone ENT — should pass
       const r3 = validate('(cf.zone.plan eq "ENT")', {
         expressionType: 'filter', accountLevel: true,
       });
-      expect(r3.diagnostics.some(d => d.code === 'builder-incompatible')).toBe(false);
+      expect(r3.diagnostics.some(d => BUILDER_CODES.includes(d.code))).toBe(false);
 
       // Wrapped and-chain + ENT — should pass
       const r4 = validate('(http.host eq "test.com" and http.request.method eq "POST") and (cf.zone.plan eq "ENT")', {
         expressionType: 'filter', accountLevel: true,
       });
-      expect(r4.diagnostics.some(d => d.code === 'builder-incompatible')).toBe(false);
+      expect(r4.diagnostics.some(d => BUILDER_CODES.includes(d.code))).toBe(false);
     });
   });
 });
