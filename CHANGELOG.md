@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.14.0] - 2026-08-17
+
+### Added
+- **`--fix-only <code>`** restricts `--fix` to one diagnostic code, repeatable. `--fix` applied all 16 rewrites with no way to select, which put the always-safe parenthesis wraps behind the same flag as De Morgan rewrites and or-branch restructuring. On a real repo that meant asking for 12 wraps and being offered 46 changes across 8 files, so the flag could not be used unattended or in CI.
+  ```
+  cf-expr-lint --fix --fix-only builder-unwrapped config/**/*.yaml
+  ```
+  Accepted codes: `builder-unwrapped`, `builder-incompatible`, `negated-comparison`, `prefer-english-operator`, `prefer-clike-operator`, `prefer-in-list`. An unknown code is a hard error rather than a silent no-op, which would otherwise read as a pass under `--check`.
+- `FIXABLE_CODES` and `FixOptions.fixOnly` exported for programmatic callers.
+
+### Fixed
+- A scoped run now touches only expressions the checker actually reports with that code. The fixer's own predicates were broader than the validator's in two places: it wrapped comparisons with a function on the left, which the Builder check skips entirely, and it treated any `not` leaf as a simple condition where the check requires `not` of a Builder condition. Both meant `--fix --check --fix-only builder-unwrapped` could fail on expressions that produced no warning. Unscoped `--fix` behaviour is unchanged.
+
+### Notes
+Default `--fix` still applies everything. Making the safe subset the default is a breaking change to the flag's meaning and is deliberately not part of this release.
+
 ## [0.13.0] - 2026-08-13
 
 ### Changed

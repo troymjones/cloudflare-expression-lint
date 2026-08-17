@@ -112,6 +112,49 @@ describe('CLI', () => {
     });
   });
 
+  describe('--fix-only', () => {
+    it('restricts --fix to the named code', () => {
+      const { stdout } = run([
+        '--fix', '--fix-only', 'builder-unwrapped',
+        '-e', 'not (http.host eq "a.com" and http.request.method eq "POST")',
+      ]);
+      expect(stdout).not.toContain('De Morgan');
+      expect(stdout).toContain('not (http.host eq "a.com" and http.request.method eq "POST")');
+    });
+
+    it('still applies the named code', () => {
+      const { stdout } = run([
+        '--fix', '--fix-only', 'builder-unwrapped',
+        '-e', 'http.host eq "a.com" and http.request.method eq "POST"',
+      ]);
+      expect(stdout).toContain('(http.host eq "a.com" and http.request.method eq "POST")');
+    });
+
+    it('is repeatable', () => {
+      const { stdout } = run([
+        '--fix', '--fix-only', 'builder-unwrapped', '--fix-only', 'prefer-english-operator',
+        '-e', 'http.host == "a.com" and http.request.method == "POST"',
+      ]);
+      expect(stdout).toContain('(http.host eq "a.com" and http.request.method eq "POST")');
+    });
+
+    it('rejects an unknown code instead of silently fixing nothing', () => {
+      const { stdout, exitCode } = run([
+        '--fix', '--fix-only', 'builder-unwrappd', '-e', 'http.host eq "a.com"',
+      ]);
+      expect(exitCode).toBe(1);
+      expect(stdout).toContain('Unknown --fix-only code');
+    });
+
+    it('requires --fix', () => {
+      const { stdout, exitCode } = run([
+        '--fix-only', 'builder-unwrapped', '-e', 'http.host eq "a.com"',
+      ]);
+      expect(exitCode).toBe(1);
+      expect(stdout).toContain('--fix-only requires --fix');
+    });
+  });
+
   describe('--prettify mode', () => {
     let tmpDir: string;
 

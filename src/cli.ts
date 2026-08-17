@@ -27,7 +27,7 @@ import { glob } from 'glob';
 import { validate } from './validator.js';
 import { formatExpression } from './formatter.js';
 import { rewriteExpressions } from './rewriter.js';
-import { fixExpression } from './fixer.js';
+import { fixExpression, FIXABLE_CODES } from './fixer.js';
 import { scanYaml, getDefaultExpressionKeys } from './yaml-scanner.js';
 import type { ScannerOptions, ExpressionKeyMapping } from './yaml-scanner.js';
 import type { ValidationContext, ExpressionType, OperatorStyle, Diagnostic } from './types.js';
@@ -47,6 +47,7 @@ interface CLIOptions {
   quiet: boolean;
   warnExitCode: number;
   ignoreCodes: string[];
+  fixOnly: string[];
   operatorStyle: OperatorStyle;
   prettify: boolean;
   fix: boolean;
@@ -68,6 +69,7 @@ function parseArgs(argv: string[]): CLIOptions {
     quiet: false,
     warnExitCode: 0,
     ignoreCodes: [],
+    fixOnly: [],
     operatorStyle: 'english',
     prettify: false,
     fix: false,
@@ -149,6 +151,9 @@ function parseArgs(argv: string[]): CLIOptions {
         break;
       case '--ignore-code':
         opts.ignoreCodes.push(argv[++i]);
+        break;
+      case '--fix-only':
+        opts.fixOnly.push(argv[++i]);
         break;
       case '--operator-style':
         opts.operatorStyle = argv[++i] as OperatorStyle;
@@ -310,7 +315,13 @@ Options:
   --fix                      Auto-fix expressions in YAML files for Builder
                              compatibility (wrap bare exprs, merge and-groups,
                              De Morgan's rewrites, operator style).
-  --prettify                 Reformat expressions in YAML files for readability.
+  --fix-only <code>          Restrict --fix to one diagnostic code (repeatable).
+                             Use "builder-unwrapped" to add missing parentheses
+                             without any rewrite that reshapes the expression.
+                             Codes: builder-unwrapped, builder-incompatible,
+                             negated-comparison, prefer-english-operator,
+                             prefer-clike-operator, prefer-in-list.
+  --prettify               Reformat expressions in YAML files for readability.
                              Breaks long expressions across multiple lines using
                              >- (folded block scalar) syntax.
   --convert-block-scalars    Convert existing | and |- block scalars to >-.
@@ -422,6 +433,21 @@ function formatDiagnostic(d: Diagnostic): string {
 async function main(): Promise<void> {
   const opts = parseArgs(process.argv.slice(2));
 
+  // A typo here would silently fix nothing, which in --check mode reads as a pass.
+  if (opts.fixOnly.length > 0) {
+    const unknown = opts.fixOnly.filter(c => !(FIXABLE_CODES as readonly string[]).includes(c));
+    if (unknown.length > 0) {
+      console.error(`Unknown --fix-only code(s): ${unknown.join(', ')}`);
+      console.error(`Valid codes: ${FIXABLE_CODES.join(', ')}`);
+      process.exit(1);
+    }
+    if (!opts.fix) {
+      console.error('--fix-only requires --fix');
+      process.exit(1);
+    }
+  }
+
+
   if (opts.help) {
     printHelp();
     process.exit(0);
@@ -441,7 +467,7 @@ async function main(): Promise<void> {
     }
 
     if (opts.fix) {
-      const result = fixExpression(expr, { operatorStyle: opts.operatorStyle, expressionType: opts.type });
+      const result = fixExpression(expr, { operatorStyle: opts.operatorStyle, expressionType: opts.type, fixOnly: opts.fixOnly });
       console.log(result.expression);
       if (result.fixes.length > 0) {
         console.error(`Fixes: ${result.fixes.join(', ')}`);
@@ -532,7 +558,7 @@ async function main(): Promise<void> {
       // Build replacements map: canonical original → fixed expression
       const replacements = new Map<string, string>();
       for (const expr of scanResult.expressions) {
-        const result = fixExpression(expr.expression, { operatorStyle: opts.operatorStyle, expressionType: expr.expressionType });
+        const result = fixExpression(expr.expression, { operatorStyle: opts.operatorStyle, expressionType: expr.expressionType, fixOnly: opts.fixOnly });
         if (!result.changed) continue;
         // Canonicalize the original to match what rewriteExpressions uses for lookup
         const canonical = formatExpression(expr.expression, { maxWidth: Infinity });

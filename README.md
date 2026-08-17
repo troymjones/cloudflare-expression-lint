@@ -12,7 +12,7 @@ Catches errors **before** `terraform apply` — no API calls required.
 - **Phase-aware validation** — knows which fields are available in which Cloudflare phase
 - **Function context validation** — `regex_replace()` is only valid in rewrite/redirect contexts
 - **Expression Builder compatibility** — flags expressions that can't be loaded in the Cloudflare UI
-- **Auto-fixer** — `--fix` rewrites expressions for Builder compatibility (wraps bare expressions, merges and-groups, applies De Morgan's law, normalizes operators)
+- **Auto-fixer** — `--fix` rewrites expressions for Builder compatibility (wraps bare expressions, merges and-groups, applies De Morgan's law, normalizes operators), scopeable to a single diagnostic code with `--fix-only`
 - **Prettifier** — `--prettify` reformats long expressions across multiple lines using `>-` block scalars
 - **Operator style** — configurable preference for English (`eq`, `and`) vs C-like (`==`, `&&`)
 - **YAML scanner** — auto-detects expressions in YAML files and infers Cloudflare phase from context
@@ -76,16 +76,41 @@ cf-expr-lint --fix --config .cf-expr-lint.json config/**/*.yaml
 
 # Dry-run — check if fixes are needed (exits non-zero if so)
 cf-expr-lint --fix --check config/**/*.yaml
+
+# Apply only the missing-parenthesis wraps, leaving every rewrite alone
+cf-expr-lint --fix --fix-only builder-unwrapped config/**/*.yaml
 ```
 
 The fixer applies these transformations:
-- Wrap bare expressions: `A eq B` → `(A eq B)`
-- Merge and-groups: `(A) and (B)` → `(A and B)`
-- Remove outer parens from or-chains: `((A) or (B))` → `(A) or (B)`
-- Wrap or-branches: `A or B` → `(A) or (B)`
-- Unwrap individually-wrapped and-conditions: `((A) and (B))` → `(A and B)`
-- De Morgan's law: `not (A or B)` → `(not A and not B)`
-- Operator style: `==` → `eq`, `<=` → `le`, `&&` → `and`, etc.
+
+| Fix | Diagnostic code |
+|-----|-----------------|
+| Wrap bare expressions: `A eq B` → `(A eq B)` | `builder-unwrapped` |
+| Wrap bare `not`: `not A eq B` → `(not A eq B)` | `builder-unwrapped` |
+| Wrap and-chains: `A and B` → `(A and B)` | `builder-unwrapped` |
+| Merge and-groups: `(A) and (B)` → `(A and B)` | `builder-incompatible` |
+| Remove outer parens from or-chains: `((A) or (B))` → `(A) or (B)` | `builder-incompatible` |
+| Wrap or-branches: `A or B` → `(A) or (B)` | `builder-incompatible` |
+| Unwrap individually-wrapped and-conditions: `((A) and (B))` → `(A and B)` | `builder-incompatible` |
+| De Morgan's law: `not (A or B)` → `(not A and not B)` | `builder-incompatible` |
+| Negated comparison: `not A eq X` → `A ne X` | `negated-comparison` |
+| Collapse or-eq chain to in-list | `prefer-in-list` |
+| Operator style: `==` → `eq`, `&&` → `and` | `prefer-english-operator` |
+
+`--fix-only <code>` restricts a run to one code and is repeatable. The three
+`builder-unwrapped` fixes only add parentheses, so they cannot change what an
+expression matches. Everything else reshapes a working expression, which is
+worth a human read. Scoping to `builder-unwrapped` is therefore the form that
+is safe to run unattended:
+
+```yaml
+# Fail CI on a new unwrapped expression, without ever proposing a rewrite
+- cf-expr-lint --fix --check --fix-only builder-unwrapped config/**/*.yaml
+```
+
+A scoped run only touches expressions the checker actually reports with that
+code, so `--check` cannot fail on something the linter did not warn about. An
+unknown code is a hard error rather than a silent no-op.
 
 ### Prettify expressions
 
@@ -174,6 +199,7 @@ For projects with many custom mappings, use a `.cf-expr-lint.json` config file:
 | `--ignore-code` | | Suppress a diagnostic code repo-wide (repeatable). For per-expression suppression, use [inline directives](#inline-disable-directives). |
 | `--operator-style` | | Operator style: `english` (default), `clike`, `off` |
 | `--fix` | | Auto-fix expressions for Builder compatibility |
+| `--fix-only` | | Restrict `--fix` to one diagnostic code (repeatable) |
 | `--prettify` | | Reformat long expressions as multi-line `>-` block scalars |
 | `--convert-block-scalars` | | Convert `\|` and `\|-` to `>-` (use with `--prettify`) |
 | `--max-width` | | Max line width for `--prettify` (default: 120) |
@@ -321,6 +347,7 @@ const pretty = formatExpression('(A and B and C)', { maxWidth: 40 });
 | `header-key-not-lowercase` | warning | Header map key should be lowercase |
 | `invalid-wildcard-pattern` | warning | Wildcard contains `**` |
 | `builder-unwrapped` | warning | Expression is not wrapped in parentheses |
+
 | `builder-incompatible` | info | Not in Expression Builder format |
 | `prefer-english-operator` | info | Suggests English notation (`eq`, `and`) |
 | `prefer-clike-operator` | info | Suggests C-like notation (`==`, `&&`) |

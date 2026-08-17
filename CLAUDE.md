@@ -9,7 +9,7 @@ A TypeScript parser, validator, linter, formatter, and auto-fixer for Cloudflare
 - `src/validator.ts` — Semantic validator (AST → Diagnostic[]) with operator style, ambiguous precedence, deprecated fields, phase validation, function context/limits
 - `src/builder-compat.ts` — Expression Builder compatibility checker and account-level suffix validation
 - `src/template-detection.ts` — Template placeholder detection (UPPER_CASE and __NAME__ patterns)
-- `src/fixer.ts` — Auto-fixer (AST → AST) for Builder compatibility: wraps bare expressions, merges and-groups, De Morgan's rewrites, or-eq-to-in collapse, operator style normalization
+- `src/fixer.ts` — Auto-fixer (AST → AST) for Builder compatibility: wraps bare expressions, merges and-groups, De Morgan's rewrites, or-eq-to-in collapse, operator style normalization. `fixOnly` scopes a run to given diagnostic codes and then only touches expressions the checker reports with them
 - `src/formatter.ts` — Prettifier (AST → multi-line string) that breaks on and/or boundaries, never mid-condition. Preserves raw strings.
 - `src/ast-utils.ts` — Shared AST utilities: printNode, normalizeOp, collectChain, stripGroup, escapeString
 - `src/placeholders.ts` — Placeholder pre-processing: substitutes __NAME__/UPPER_CASE template variables with synthetic values for parsing
@@ -18,7 +18,7 @@ A TypeScript parser, validator, linter, formatter, and auto-fixer for Cloudflare
 - `src/yaml-scanner.ts` — YAML file scanner with configurable expression key and phase mappings, account-level path detection
 - `src/directives.ts` — Inline disable-directive parsing (`# cf-expr-lint-disable-file/disable/enable/disable-next-line/disable-line`); anchor-mode covers full `>-` block-scalar values when a directive precedes an expression key
 - `src/eslint-plugin.ts` — ESLint plugin adapter (optional, uses yaml-eslint-parser)
-- `src/cli.ts` — CLI with --fix, --prettify, --check, --convert-block-scalars, --config, --operator-style, --version flags
+- `src/cli.ts` — CLI with --fix, --fix-only, --prettify, --check, --convert-block-scalars, --config, --operator-style, --version flags
 - `src/types.ts` — All type definitions (StringLiteralNode has `raw` flag)
 - `src/schemas/fields.ts` — Field registry (186+ fields)
 - `src/schemas/functions.ts` — Function registry (29+ functions)
@@ -34,6 +34,7 @@ A TypeScript parser, validator, linter, formatter, and auto-fixer for Cloudflare
 - `node dist/cli.js --fix -e 'EXPRESSION'` — Auto-fix a single expression
 - `node dist/cli.js --prettify -e 'EXPRESSION'` — Format a single expression
 - `node dist/cli.js --fix config/**/*.yaml` — Fix all YAML files
+- `node dist/cli.js --fix --fix-only builder-unwrapped config/**/*.yaml` — Apply only the parenthesis wraps
 - `node dist/cli.js --fix --check config/**/*.yaml` — Dry-run fix check
 - `node dist/cli.js --prettify --convert-block-scalars config/**/*.yaml` — Prettify and convert block scalars
 - `node dist/cli.js --prettify --check config/**/*.yaml` — Dry-run prettify check
@@ -77,11 +78,12 @@ NOT auto-fixable (flagged as info only):
 - The prettifier only breaks on and/or boundaries, never within a condition
 - The >- (folded, strip) block scalar is the correct YAML choice for expressions
 - `--check` mode must exit 1 if changes would be made, 0 if clean
+- A `--fix-only` run must never change an expression the checker does not report with that code, or `--check` gates fail on unreported expressions
 
 ## CI Integration
 ```yaml
 # GitLab CI example
 - cf-expr-lint --warn-exit-code 2 --config .cf-expr-lint.json $(find config -name "*.yaml")
-- cf-expr-lint --fix --check --config .cf-expr-lint.json $(find config -name "*.yaml")
+- cf-expr-lint --fix --check --fix-only builder-unwrapped --config .cf-expr-lint.json $(find config -name "*.yaml")
 - cf-expr-lint --prettify --check --config .cf-expr-lint.json $(find config -name "*.yaml")
 ```

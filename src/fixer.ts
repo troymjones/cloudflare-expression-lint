@@ -8,13 +8,53 @@
 import { parse } from './parser.js';
 import { substitutePlaceholders, restorePlaceholders } from './placeholders.js';
 import { printNode, normalizeOp, collectChain, stripGroup } from './ast-utils.js';
-import type { ASTNode, OperatorStyle, ExpressionType } from './types.js';
+import { checkBuilderCompatibility } from './builder-compat.js';
+import type { ASTNode, OperatorStyle, ExpressionType, Diagnostic } from './types.js';
 
 export interface FixOptions {
   /** Operator style to enforce. Default: 'english' */
   operatorStyle?: OperatorStyle;
   /** Expression type. Rewrite/redirect expressions skip Builder-compat wrapping. */
   expressionType?: ExpressionType;
+  /**
+   * Restrict fixes to these diagnostic codes. Omit or leave empty to apply all.
+   * Lets callers take the always-safe `builder-unwrapped` wraps without the
+   * De Morgan and or-branch rewrites, which reshape a working expression.
+   */
+  fixOnly?: string[];
+}
+
+/** Diagnostic codes that `fixOnly` accepts. */
+export const FIXABLE_CODES = [
+  'builder-unwrapped',
+  'builder-incompatible',
+  'negated-comparison',
+  'prefer-english-operator',
+  'prefer-clike-operator',
+  'prefer-in-list',
+] as const;
+
+function allows(options: FixOptions | undefined, code: string): boolean {
+  const only = options?.fixOnly;
+  return !only || only.length === 0 || only.includes(code);
+}
+
+const BUILDER_CODES = ['builder-unwrapped', 'builder-incompatible'];
+
+/**
+ * True when a scoped run should touch this expression at all: either it carries
+ * one of the requested Builder codes, or a non-Builder code was requested and
+ * those fixers can judge for themselves.
+ */
+function hasRequestedBuilderCode(ast: ASTNode, fixOnly: string[]): boolean {
+  const builderRequested = fixOnly.filter(c => BUILDER_CODES.includes(c));
+  if (builderRequested.length === 0) return true;
+  if (fixOnly.some(c => !BUILDER_CODES.includes(c))) return true;
+
+  const diagnostics: Diagnostic[] = [];
+  checkBuilderCompatibility(ast, diagnostics);
+  const present = new Set(diagnostics.map(d => d.code));
+  return builderRequested.some(c => present.has(c));
 }
 
 export interface FixResult {
@@ -53,6 +93,14 @@ export function fixExpression(expression: string, options?: FixOptions): FixResu
     return { expression: trimmed, changed: false, fixes: [] };
   }
 
+  // Scoped runs must fix exactly what the matching diagnostic reports, or a
+  // --check gate fails on expressions the linter never warned about. Ask the
+  // checker which Builder codes this expression actually has, rather than
+  // relying on the fixer's own predicates agreeing with the validator's.
+  if (options?.fixOnly?.length && !hasRequestedBuilderCode(ast, options.fixOnly)) {
+    return { expression: trimmed, changed: false, fixes: [] };
+  }
+
   // Apply fixes to the AST
   const fixed = fixNode(ast, fixes, options);
 
@@ -81,10 +129,10 @@ function fixNode(node: ASTNode, fixes: string[], options?: FixOptions): ASTNode 
   if (isFilter) {
     for (let pass = 0; pass < 5; pass++) {
       const before = printNode(fixed);
-      fixed = fixNegatedComparison(fixed, fixes);
-      fixed = fixOrEqToIn(fixed, fixes);
-      fixed = fixDeMorgans(fixed, fixes);
-      fixed = fixBuilderStructure(fixed, fixes);
+      fixed = fixNegatedComparison(fixed, fixes, options);
+      fixed = fixOrEqToIn(fixed, fixes, options);
+      fixed = fixDeMorgans(fixed, fixes, options);
+      fixed = fixBuilderStructure(fixed, fixes, options);
       if (printNode(fixed) === before) break;
     }
   }
@@ -96,6 +144,8 @@ function fixNode(node: ASTNode, fixes: string[], options?: FixOptions): ASTNode 
 function fixOperatorStyle(node: ASTNode, fixes: string[], options?: FixOptions): ASTNode {
   const style = options?.operatorStyle ?? 'english';
   if (style === 'off') return node;
+  const styleCode = style === 'english' ? 'prefer-english-operator' : 'prefer-clike-operator';
+  if (!allows(options, styleCode)) return node;
 
   const flagMap = style === 'english' ? CLIKE_TO_ENGLISH : ENGLISH_TO_CLIKE;
 
@@ -140,9 +190,10 @@ function fixOperatorStyle(node: ASTNode, fixes: string[], options?: FixOptions):
  * (A eq "x") or (A eq "y") or (A eq "z") → (A in {"x" "y" "z"})
  * Recurses into Groups to find nested or-chains.
  */
-function fixOrEqToIn(node: ASTNode, fixes: string[]): ASTNode {
+function fixOrEqToIn(node: ASTNode, fixes: string[], options?: FixOptions): ASTNode {
+  if (!allows(options, 'prefer-in-list')) return node;
   if (node.kind === 'Group') {
-    const fixed = fixOrEqToIn(node.expression, fixes);
+    const fixed = fixOrEqToIn(node.expression, fixes, options);
     return fixed !== node.expression ? { ...node, expression: fixed } : node;
   }
 
@@ -181,8 +232,8 @@ function fixOrEqToIn(node: ASTNode, fixes: string[]): ASTNode {
     }
 
     // For and-chains or non-matching or-chains: recurse into children
-    const left = fixOrEqToIn(node.left, fixes);
-    const right = fixOrEqToIn(node.right, fixes);
+    const left = fixOrEqToIn(node.left, fixes, options);
+    const right = fixOrEqToIn(node.right, fixes, options);
     return (left !== node.left || right !== node.right) ? { ...node, left, right } : node;
   }
 
@@ -204,10 +255,11 @@ function extractEqField(branch: ASTNode): string | null {
  * The Comparison is unwrapped from any immediate Group inside the Not, which
  * matches how the parser produces `not (X eq Y)`.
  */
-function fixNegatedComparison(node: ASTNode, fixes: string[]): ASTNode {
+function fixNegatedComparison(node: ASTNode, fixes: string[], options?: FixOptions): ASTNode {
+  if (!allows(options, 'negated-comparison')) return node;
   switch (node.kind) {
     case 'Not': {
-      const operand = fixNegatedComparison(node.operand, fixes);
+      const operand = fixNegatedComparison(node.operand, fixes, options);
       const inner = operand.kind === 'Group' ? operand.expression : operand;
       if (inner.kind === 'Comparison') {
         const op = normalizeOp(inner.operator);
@@ -224,20 +276,21 @@ function fixNegatedComparison(node: ASTNode, fixes: string[]): ASTNode {
     case 'Logical':
       return {
         ...node,
-        left: fixNegatedComparison(node.left, fixes),
-        right: fixNegatedComparison(node.right, fixes),
+        left: fixNegatedComparison(node.left, fixes, options),
+        right: fixNegatedComparison(node.right, fixes, options),
       };
     case 'Group':
-      return { ...node, expression: fixNegatedComparison(node.expression, fixes) };
+      return { ...node, expression: fixNegatedComparison(node.expression, fixes, options) };
     default:
       return node;
   }
 }
 
-function fixDeMorgans(node: ASTNode, fixes: string[]): ASTNode {
+function fixDeMorgans(node: ASTNode, fixes: string[], options?: FixOptions): ASTNode {
+  if (!allows(options, 'builder-incompatible')) return node;
   switch (node.kind) {
     case 'Not': {
-      const operand = fixDeMorgans(node.operand, fixes);
+      const operand = fixDeMorgans(node.operand, fixes, options);
       // not (A or B) → not A and not B (will be wrapped later)
       if (operand.kind === 'Group' && operand.expression.kind === 'Logical') {
         const inner = operand.expression;
@@ -276,26 +329,28 @@ function fixDeMorgans(node: ASTNode, fixes: string[]): ASTNode {
     case 'Logical':
       return {
         ...node,
-        left: fixDeMorgans(node.left, fixes),
-        right: fixDeMorgans(node.right, fixes),
+        left: fixDeMorgans(node.left, fixes, options),
+        right: fixDeMorgans(node.right, fixes, options),
       };
     case 'Group':
-      return { ...node, expression: fixDeMorgans(node.expression, fixes) };
+      return { ...node, expression: fixDeMorgans(node.expression, fixes, options) };
     default:
       return node;
   }
 }
 
 /** Fix top-level structure for Builder compatibility */
-function fixBuilderStructure(node: ASTNode, fixes: string[]): ASTNode {
+function fixBuilderStructure(node: ASTNode, fixes: string[], options?: FixOptions): ASTNode {
   // Bare comparison/in/function at top level → wrap in group
   if (node.kind === 'Comparison' || node.kind === 'InExpression' || node.kind === 'FunctionCall') {
+    if (!allows(options, 'builder-unwrapped')) return node;
     fixes.push('wrap bare expression in parentheses');
     return buildGroup(node);
   }
 
   // Bare not at top level → wrap: not A → (not A)
   if (node.kind === 'Not' && node.operand.kind !== 'Group') {
+    if (!allows(options, 'builder-unwrapped')) return node;
     fixes.push('wrap not expression in parentheses');
     return buildGroup(node);
   }
@@ -308,6 +363,7 @@ function fixBuilderStructure(node: ASTNode, fixes: string[]): ASTNode {
     // Check if any leaves are Groups (the (A) and (B) pattern)
     const hasGroups = leaves.some(l => l.kind === 'Group');
     if (hasGroups) {
+      if (!allows(options, 'builder-incompatible')) return node;
       // (A) and (B) → (A and B): unwrap inner groups and merge
       // Also flatten nested and-chains: ((A and B)) and (C) → (A and B and C)
       const allLeaves: ASTNode[] = [];
@@ -356,7 +412,7 @@ function fixBuilderStructure(node: ASTNode, fixes: string[]): ASTNode {
         if (mainLeaves.length === 1) {
           const inner = mainLeaves[0];
           // Fix the inner expression with normal Builder rules
-          const fixedInner = fixBuilderStructure(stripGroup(inner), fixes);
+          const fixedInner = fixBuilderStructure(stripGroup(inner), fixes, options);
           // Wrap once: normal Builder form + 1 extra group for account-level
           const wrapped = buildGroup(fixedInner);
           const result: ASTNode = { kind: 'Logical', left: wrapped, operator: 'and', right: suffixGroup, position: 0 };
@@ -374,6 +430,7 @@ function fixBuilderStructure(node: ASTNode, fixes: string[]): ASTNode {
     } else {
       // Bare A and B → (A and B)
       if (leaves.every(l => isSimpleCondition(l) || l.kind === 'Not')) {
+        if (!allows(options, 'builder-unwrapped')) return node;
         fixes.push('wrap and-chain in parentheses');
         return buildGroup(node);
       }
@@ -382,6 +439,7 @@ function fixBuilderStructure(node: ASTNode, fixes: string[]): ASTNode {
 
   // Top-level or-chain → ensure each branch is wrapped
   if (node.kind === 'Logical' && isAllOp(node, 'or')) {
+    if (!allows(options, 'builder-incompatible')) return node;
     const branches: ASTNode[] = [];
     collectChain(node, 'or', branches);
 
@@ -391,7 +449,7 @@ function fixBuilderStructure(node: ASTNode, fixes: string[]): ASTNode {
         // Already wrapped — fix inner individually-wrapped and-conditions
         const inner = b.expression;
         if (inner.kind === 'Logical' && isAllOp(inner, 'and')) {
-          const fixed = fixInnerAndGroup(inner, fixes);
+          const fixed = fixInnerAndGroup(inner, fixes, options);
           if (fixed !== inner) {
             changed = true;
             return buildGroup(fixed);
@@ -403,7 +461,7 @@ function fixBuilderStructure(node: ASTNode, fixes: string[]): ASTNode {
       changed = true;
       if (b.kind === 'Logical' && isAllOp(b, 'and')) {
         fixes.push('wrap or-branch in parentheses');
-        const fixed = fixInnerAndGroup(b, fixes);
+        const fixed = fixInnerAndGroup(b, fixes, options);
         return buildGroup(fixed);
       }
       if (isSimpleCondition(b) || b.kind === 'Not' || b.kind === 'FunctionCall') {
@@ -420,13 +478,14 @@ function fixBuilderStructure(node: ASTNode, fixes: string[]): ASTNode {
 
   // Group containing or-chain → remove outer group: ((A) or (B)) → (A) or (B)
   if (node.kind === 'Group' && node.expression.kind === 'Logical' && isAllOp(node.expression, 'or')) {
+    if (!allows(options, 'builder-incompatible')) return node;
     fixes.push('remove outer parentheses from or-chain');
-    return fixBuilderStructure(node.expression, fixes);
+    return fixBuilderStructure(node.expression, fixes, options);
   }
 
   // Group containing and-chain with individually-wrapped conditions
   if (node.kind === 'Group' && node.expression.kind === 'Logical' && isAllOp(node.expression, 'and')) {
-    const fixed = fixInnerAndGroup(node.expression, fixes);
+    const fixed = fixInnerAndGroup(node.expression, fixes, options);
     if (fixed !== node.expression) {
       return { ...node, expression: fixed };
     }
@@ -436,7 +495,8 @@ function fixBuilderStructure(node: ASTNode, fixes: string[]): ASTNode {
 }
 
 /** Fix individually-wrapped conditions in an and-group: (A) and (B) → A and B */
-function fixInnerAndGroup(node: ASTNode, fixes: string[]): ASTNode {
+function fixInnerAndGroup(node: ASTNode, fixes: string[], options?: FixOptions): ASTNode {
+  if (!allows(options, 'builder-incompatible')) return node;
   if (node.kind !== 'Logical') return node;
 
   const leaves: ASTNode[] = [];
