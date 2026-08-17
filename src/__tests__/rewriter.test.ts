@@ -656,22 +656,36 @@ describe('rewriteExpressions with replacements', () => {
     expect(prettifyResult.content).toBe(fixResult.content);
   });
 
-  it('replacement with multi-line formatting uses >- block scalar', () => {
+  it('replacement that wraps uses a >- block scalar', () => {
+    const original = '(http.host eq "example.com") and (http.request.method eq "POST") and (http.request.uri.path eq "/some/long/path")';
+    const replaced = '(http.host eq "example.com" and http.request.method eq "POST" and http.request.uri.path eq "/some/long/path")';
+    const content = `    expression: ${original}\n    enabled: true\n`;
+
+    const result = rewriteExpressions(content, [{ expression: original }], {
+      maxWidth: 60,
+      convertBlockScalars: true,
+      replacements: new Map([[original, replaced]]),
+    });
+    expect(result.content).toContain('>-');
+    expect(result.count).toBe(1);
+  });
+
+  // A >- holding one line costs a line and buys nothing.
+  it('replacement that fits on one line stays inline', () => {
     const content = [
       '    expression: (A) and (B) and (C)',
       '    enabled: true',
       '',
     ].join('\n');
-    const expressions = [{ expression: '(A) and (B) and (C)' }];
-    // Fix merges and-groups
     const replacements = new Map([['(A) and (B) and (C)', '(A and B and C)']]);
 
-    const result = rewriteExpressions(content, expressions, {
-      maxWidth: 20,
+    const result = rewriteExpressions(content, [{ expression: '(A) and (B) and (C)' }], {
+      maxWidth: 100,
       convertBlockScalars: true,
       replacements,
     });
-    expect(result.content).toContain('>-');
+    expect(result.content).toBe('    expression: (A and B and C)\n    enabled: true\n');
+    expect(result.content).not.toContain('>-');
     expect(result.count).toBe(1);
   });
 

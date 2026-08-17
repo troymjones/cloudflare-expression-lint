@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.14.2] - 2026-08-17
+
+### Fixed
+- **Single-line expressions are written inline instead of in a `>-` block.** The rewriter emitted a block scalar for every replacement, so wrapping a short expression produced a two-line `>-` holding one line, which costs a line and buys nothing. A block scalar is now used only when the formatted output actually wraps.
+- Inline output prefers plain style, falls back to single quotes so backslashes in regex literals never need escaping, and uses double quotes only when the value contains a single quote. Round-tripped through a YAML parser in tests to confirm the emitted scalar reads back byte-identical, including values with `: `, ` #`, IPv6 colons, and mixed quotes.
+- `inlineScalar` exported for callers building their own YAML output.
+
 ## [0.14.1] - 2026-08-17
 
 ### Fixed

@@ -108,10 +108,11 @@ export function rewriteExpressions(
         continue;
       }
 
-      // Build the >- replacement with proper indentation
-      const exprIndent = indent + '  ';
-      const formattedLines = formatted.split('\n').map(l => exprIndent + l).join('\n');
-      const replacement = `${indent}${key} >-\n${formattedLines}\n`;
+      // A >- block that holds a single line buys nothing and costs a line, so
+      // write those inline. Only genuinely wrapped output gets a block scalar.
+      const replacement = isMultiLine
+        ? `${indent}${key} >-\n${formatted.split('\n').map(l => `${indent}  ${l}`).join('\n')}\n`
+        : `${indent}${key} ${inlineScalar(formatted)}\n`;
 
       modified = modified.substring(0, lineStart) + replacement + modified.substring(lineEnd);
       count++;
@@ -119,6 +120,26 @@ export function rewriteExpressions(
   }
 
   return { content: modified, count };
+}
+
+/**
+ * Render a single-line expression as a YAML scalar, preferring plain style.
+ * Falls back to single quotes so backslashes in regex literals never need
+ * escaping, and to double quotes only when the value contains a single quote.
+ */
+export function inlineScalar(value: string): string {
+  const startsWithIndicator = /^[-?:,[\]{}#&*!|>'"%@`]/.test(value);
+  const hasCommentStart = value.includes(' #');
+  const hasMappingSep = value.includes(': ') || value.endsWith(':');
+  const hasEdgeSpace = value !== value.trim();
+
+  if (!startsWithIndicator && !hasCommentStart && !hasMappingSep && !hasEdgeSpace) {
+    return value;
+  }
+  if (!value.includes("'")) {
+    return `'${value}'`;
+  }
+  return JSON.stringify(value);
 }
 
 /** Canonicalize an expression by parsing and re-formatting as single line.
