@@ -155,6 +155,40 @@ describe('CLI', () => {
     });
   });
 
+  // Reformatting a neighbour turns a one-line fix into a whole-file diff, and
+  // for Cloudflare it means a Terraform plan diff on rules nobody touched.
+  describe('--fix leaves unfixed expressions byte-identical', () => {
+    let dir: string;
+
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), 'cf-fix-scope-'));
+      cpSync(join(FIXTURES, 'fix-scope.yaml'), join(dir, 'fix-scope.yaml'));
+    });
+
+    afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+    it('rewrites only the expression it fixed', () => {
+      const before = readFileSync(join(dir, 'fix-scope.yaml'), 'utf-8');
+      run(['--fix', join(dir, 'fix-scope.yaml')]);
+      const after = readFileSync(join(dir, 'fix-scope.yaml'), 'utf-8');
+
+      expect(after).toContain('(http.host eq "a.example.com" and http.request.method eq "POST")');
+      // The two already-correct expressions keep their original source text.
+      for (const line of before.split('\n')) {
+        if (line.includes('b.example.com') || line.includes('c.example.com')) {
+          expect(after).toContain(line);
+        }
+      }
+    });
+
+    it('still reformats everything when --prettify is combined', () => {
+      run(['--fix', '--prettify', join(dir, 'fix-scope.yaml')]);
+      const after = readFileSync(join(dir, 'fix-scope.yaml'), 'utf-8');
+      expect(after).toContain('>-');
+      expect(after).not.toContain('\\"');
+    });
+  });
+
   describe('--prettify mode', () => {
     let tmpDir: string;
 

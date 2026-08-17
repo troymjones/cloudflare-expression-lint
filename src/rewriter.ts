@@ -18,6 +18,9 @@ export interface RewriteOptions extends FormatOptions {
   /** Map of canonical original expression → replacement expression.
    *  When provided, the replacement is formatted and written instead of the original. */
   replacements?: Map<string, string>;
+  /** Leave every expression without a replacement byte-identical. Used by --fix
+   *  so fixing one expression cannot reformat its neighbours. */
+  onlyReplacements?: boolean;
 }
 
 export interface RewriteResult {
@@ -60,6 +63,7 @@ export function rewriteExpressions(
     // canonical form is a short single line: the YAML representation may be a
     // double-quoted scalar with \n escapes, which is never the canonical form.
     const hasReplacement = options?.replacements?.has(canonicalExpr) ?? false;
+    if (options?.onlyReplacements && !hasReplacement) continue;
     const valueSpansLines = expr.expression.includes('\n');
     const mustInspect = hasReplacement || options?.convertBlockScalars || valueSpansLines;
     if (!mustInspect && formatted === canonicalExpr) continue;

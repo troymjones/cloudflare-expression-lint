@@ -1,0 +1,7 @@
+rules:
+  # Needs a builder-unwrapped wrap.
+  - expression: http.host eq "a.example.com" and http.request.method eq "POST"
+  # Already correct, but long enough that the prettifier would reflow it.
+  - expression: "(http.host eq \"b.example.com\" and http.request.method eq \"POST\" and http.request.uri.path eq \"/some/fairly/long/path/here\")"
+  # Already correct and short.
+  - expression: (http.host eq "c.example.com")

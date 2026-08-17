@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.14.1] - 2026-08-17
+
+### Fixed
+- **`--fix` no longer reformats expressions it did not fix.** Fix mode passed `convertBlockScalars: true` into the rewriter unconditionally, which made every expression in a file eligible for reformatting as soon as one expression in it needed a fix. On a real file, fixing 11 expressions rewrote 38 of 77, and the reformatted values were not equal to the originals: the rewriter emits indented `>-` block scalars, and YAML folding preserves newlines on more-indented lines, so the stored string gained embedded `\n` and spaces. Semantically identical to Cloudflare, but a different string, which means a Terraform plan diff on rules nobody touched. Expressions without a fix are now left byte-identical. `--fix --prettify` still reformats everything, which is what it is for.
+- New `RewriteOptions.onlyReplacements` for programmatic callers that need the same guarantee.
+
 ## [0.14.0] - 2026-08-17
 
 ### Added

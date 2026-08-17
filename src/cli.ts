@@ -573,11 +573,14 @@ async function main(): Promise<void> {
 
       if (replacements.size > 0) {
         if (!opts.check) {
-          // Route through rewriteExpressions so --fix produces identical >- output as --prettify
+          // Route through rewriteExpressions so --fix produces identical >- output
+          // as --prettify, but confine it to the expressions actually fixed
+          // unless the caller asked for formatting too.
           const result = rewriteExpressions(content, scanResult.expressions, {
             maxWidth: opts.maxWidth,
-            convertBlockScalars: true,
+            convertBlockScalars: opts.prettify ? true : opts.convertBlockScalars,
             replacements,
+            onlyReplacements: !opts.prettify,
           });
           writeFileSync(absPath, result.content, 'utf-8');
         }
