@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.15.0] - 2026-08-20
+
+### Added
+- **`missing-array-unpack`** (error) catches a function applied to an array without the trailing `[*]` needed to map the result back over each element. `any(lower(http.request.headers["accept"][*]) contains "text/html")` is rejected by the Cloudflare API with `cannot perform this operation on type Array(...)`, but parsed clean here, so the first signal was a failed apply against a live zone. The correct form re-indexes the result: `any(lower(...[*])[*] contains "text/html")`.
+- Functions that consume an array rather than mapping over it are exempt, derived from the `Array` parameter type in the function registry rather than a hardcoded list, so `any()`, `all()` and `join()` are allowed and the exemption tracks the docs sync. `len()` on a whole array (`len(headers["x-foo"]) gt 0`, the element count) is still valid; only `len(headers["x-foo"][*])` needs the trailing `[*]`.
+
 ## [0.14.2] - 2026-08-17
 
 ### Fixed

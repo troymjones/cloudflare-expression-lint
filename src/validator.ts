@@ -22,7 +22,7 @@ import { containsTemplatePlaceholders, containsLegacyPlaceholders } from './temp
 import { substitutePlaceholders } from './placeholders.js';
 import { printNode, normalizeOp, collectChain } from './ast-utils.js';
 import type {
-  ASTNode, Diagnostic, DiagnosticSeverity,
+  ASTNode, Diagnostic, DiagnosticSeverity, FunctionCallNode,
   ValidationContext, LintResult, ExpressionType, OperatorStyle,
 } from './types.js';
 
@@ -148,6 +148,8 @@ class ASTWalker {
   private diagnostics: Diagnostic[];
   private functionCounts: Map<string, number> = new Map();
   private regexCount: number = 0;
+  /** FunctionCall nodes that a parent ArrayUnpack re-indexes with `[*]`. */
+  private unpackedCalls: Set<ASTNode> = new Set();
 
   constructor(context: ValidationContext, diagnostics: Diagnostic[]) {
     this.context = context;
@@ -163,6 +165,7 @@ class ASTWalker {
 
       case 'FunctionCall':
         this.validateFunction(node.name, node.position);
+        this.validateArrayMapping(node);
         this.functionCounts.set(node.name, (this.functionCounts.get(node.name) ?? 0) + 1);
         for (const arg of node.args) {
           this.walk(arg);
@@ -206,6 +209,9 @@ class ASTWalker {
         break;
 
       case 'ArrayUnpack':
+        if (node.field.kind === 'FunctionCall') {
+          this.unpackedCalls.add(node.field);
+        }
         this.walk(node.field);
         break;
 
@@ -562,6 +568,34 @@ class ASTWalker {
         });
       }
     }
+  }
+
+  /**
+   * A function applied to `field[*]` is mapped over the array, so its result is
+   * also an array and needs its own `[*]` before it can be compared. Cloudflare
+   * rejects the un-indexed form with "cannot perform this operation on type Array".
+   */
+  private validateArrayMapping(node: FunctionCallNode): void {
+    if (this.unpackedCalls.has(node)) return;
+
+    const func = findFunction(node.name);
+    const arrayArg = node.args.findIndex((arg, i) => {
+      if (arg.kind !== 'ArrayUnpack') return false;
+      // any()/all()/join() consume the array itself rather than mapping over it.
+      const params = func?.params ?? [];
+      const param = params[Math.min(i, params.length - 1)];
+      const variadicTail = param?.variadic && i >= params.length - 1;
+      if (param && (param.variadic ? variadicTail : true) && param.type === 'Array') return false;
+      return true;
+    });
+    if (arrayArg === -1) return;
+
+    this.diagnostics.push({
+      severity: 'error',
+      message: `"${node.name}()" is applied to an array ("[*]"), so it returns an array — add "[*]" after "${node.name}(...)" to map the comparison over each element`,
+      code: 'missing-array-unpack',
+      position: node.position,
+    });
   }
 
   checkFunctionLimits(): void {

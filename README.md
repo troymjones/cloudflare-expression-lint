@@ -336,6 +336,7 @@ const pretty = formatExpression('(A and B and C)', { maxWidth: 40 });
 | `function-not-in-context` | error | Function not available in the expression context |
 | `function-max-exceeded` | error | Function used more times than allowed |
 | `operator-type-mismatch` | error | Operator not compatible with field type |
+| `missing-array-unpack` | error | Function applied to an array is missing the trailing `[*]` |
 | `invalid-cidr-mask` | error | CIDR mask out of valid range |
 | `deprecated-field` | warning | Field is deprecated; replacement suggested |
 | `expression-too-long` | warning | Expression exceeds 4096 character limit |

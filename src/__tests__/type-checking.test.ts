@@ -228,3 +228,61 @@ describe('Boolean Field Style Hints', () => {
     expect(hint?.severity).toBe('info');
   });
 });
+
+describe('Array mapping ([*] on function results)', () => {
+  describe('missing [*] after a function applied to an array', () => {
+    it('errors on lower() over an array header without a trailing [*]', () => {
+      expect(codes('any(lower(http.request.headers["accept"][*]) contains "text/html")'))
+        .toContain('missing-array-unpack');
+    });
+
+    it('errors on len() over an unpacked array without a trailing [*]', () => {
+      expect(codes('any(len(http.request.headers.values[*]) gt 10)'))
+        .toContain('missing-array-unpack');
+    });
+
+    it('errors outside any()/all() too', () => {
+      expect(codes('lower(http.request.headers.names[*]) eq "x-foo"'))
+        .toContain('missing-array-unpack');
+    });
+
+    it('reports it as an error, not a warning', () => {
+      expect(isValid('any(lower(http.request.headers["accept"][*]) contains "text/html")'))
+        .toBe(false);
+    });
+  });
+
+  describe('valid array usage', () => {
+    it('accepts lower() with a trailing [*]', () => {
+      expect(codes('any(lower(http.request.headers["accept"][*])[*] contains "text/html")'))
+        .not.toContain('missing-array-unpack');
+    });
+
+    it('accepts len() with a trailing [*]', () => {
+      expect(codes('all(len(http.request.cookies["session"][*])[*] le 0)'))
+        .not.toContain('missing-array-unpack');
+    });
+
+    it('accepts len() on a whole array (element count, no [*])', () => {
+      expect(codes('len(http.request.headers["x-custom"]) gt 0'))
+        .not.toContain('missing-array-unpack');
+    });
+
+    it('accepts any()/all() consuming the array directly', () => {
+      expect(codes('any(http.request.headers["accept"][*] contains "text/html")'))
+        .not.toContain('missing-array-unpack');
+      expect(codes('all(http.request.headers.names[*] ne "x-foo")'))
+        .not.toContain('missing-array-unpack');
+    });
+
+    it('accepts join() consuming the array directly', () => {
+      expect(codes('join(http.request.headers.names[*], ",") contains "accept"'))
+        .not.toContain('missing-array-unpack');
+    });
+
+    it('ignores functions with no array argument', () => {
+      expect(codes('lower(http.request.uri.path) eq "/search"'))
+        .not.toContain('missing-array-unpack');
+    });
+  });
+});
